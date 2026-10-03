@@ -24,7 +24,7 @@ export function Home() {
         </div>
         <h1>Nexo UGC Studio</h1>
         <p className="tagline">Create. Customize. Export.</p>
-        <p className="dim home-copy">Build Roblox accessories from primitive shapes, try them on an R6 or R15 mannequin, check them against Roblox's limits, and export GLB, glTF or OBJ.</p>
+        <p className="dim home-copy">Build Roblox accessories from primitive shapes, and design shirts, pants and T-shirts on a live 3D mannequin. Check against Roblox's limits, then export.</p>
         <div className="col" style={{ gap: 8, marginTop: 8, alignItems: 'flex-start' }}>
           <button className="btn primary lg" onClick={() => setDialog('new')}>
             <FilePlus2 size={16} /> New Project
@@ -79,7 +79,7 @@ export function Home() {
                 <div className="proj-meta">
                   <div className="proj-name truncate">{p.name}</div>
                   <div className="hint">
-                    Updated {timeAgo(p.updatedAt)} · {p.objectCount} object{p.objectCount === 1 ? '' : 's'}
+                    {p.kind === 'clothing' ? 'Clothing · ' : ''}Updated {timeAgo(p.updatedAt)} · {p.objectCount} {p.kind === 'clothing' ? 'layer' : 'object'}{p.objectCount === 1 ? '' : 's'}
                   </div>
                 </div>
               </button>

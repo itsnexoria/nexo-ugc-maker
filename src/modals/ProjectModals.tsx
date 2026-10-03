@@ -42,17 +42,19 @@ export function NewProjectModal({ onClose }: { onClose?: () => void }) {
           <label htmlFor="np-name">Project name</label>
           <input id="np-name" ref={ref} className="input" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && name.trim() && create()} />
         </div>
-        <div className="field">
-          <span className="field-label">Start from</span>
-          <div className="radio-cards three" role="radiogroup" aria-label="Template">
-            {TEMPLATES.map((t) => (
-              <button key={t.id} role="radio" aria-checked={template === t.id} className={`radio-card ${template === t.id ? 'on' : ''}`} onClick={() => setTemplate(t.id)}>
-                <strong>{t.name}</strong>
-                <span>{t.description}</span>
-              </button>
-            ))}
+        {(['accessory', 'clothing'] as const).map((g) => (
+          <div className="field" key={g}>
+            <span className="field-label">{g === 'accessory' ? 'Accessories (hats, hair, face, back...)' : 'Clothing (shirts, pants, T-shirts)'}</span>
+            <div className="radio-cards three" role="radiogroup" aria-label={g === 'accessory' ? 'Accessory templates' : 'Clothing templates'}>
+              {TEMPLATES.filter((t) => t.group === g).map((t) => (
+                <button key={t.id} role="radio" aria-checked={template === t.id} className={`radio-card ${template === t.id ? 'on' : ''}`} onClick={() => setTemplate(t.id)}>
+                  <strong>{t.name}</strong>
+                  <span>{t.description}</span>
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        ))}
       </div>
     </Modal>
   );
@@ -215,7 +217,7 @@ export function OpenProjectModal({ onClose }: { onClose?: () => void }) {
             <div className="grow">
               <div className="proj-name truncate">{p.name}</div>
               <div className="hint">
-                Updated {timeAgo(p.updatedAt)} · {p.objectCount} object{p.objectCount === 1 ? '' : 's'}
+                {p.kind === 'clothing' ? 'Clothing · ' : ''}Updated {timeAgo(p.updatedAt)} · {p.objectCount} {p.kind === 'clothing' ? 'layer' : 'object'}{p.objectCount === 1 ? '' : 's'}
               </div>
             </div>
             <ProjectActions

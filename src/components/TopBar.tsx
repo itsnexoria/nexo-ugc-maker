@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Copy, Download, Eye, FilePlus2, FolderOpen, HelpCircle, Home, Info, Keyboard, Pencil, Redo2, Save, Settings, Trash2, Undo2, Upload, User } from 'lucide-react';
 import { createElement } from 'react';
 import { useEditor } from '../store/editor';
+import { useClothing } from '../store/clothing';
 import { useSettings } from '../store/settings';
 import { useUI, type MenuItem } from '../store/ui';
 import { useViewport } from '../store/viewport';
@@ -73,11 +74,18 @@ function ProjectName() {
   );
 }
 
-export function TopBar() {
-  const canUndo = useEditor((s) => s.past.length > 0);
-  const canRedo = useEditor((s) => s.future.length > 0);
-  const undo = useEditor((s) => s.undo);
-  const redo = useEditor((s) => s.redo);
+export function TopBar({ mode = 'accessory' }: { mode?: 'accessory' | 'clothing' }) {
+  const clothing = mode === 'clothing';
+  const canUndo = useEditor((s) => s.past.length > 0) && !clothing;
+  const canRedo = useEditor((s) => s.future.length > 0) && !clothing;
+  const accUndo = useEditor((s) => s.undo);
+  const accRedo = useEditor((s) => s.redo);
+  const clUndo = useClothing((s) => s.undo);
+  const clRedo = useClothing((s) => s.redo);
+  const clCanUndo = useClothing((s) => s.past.length > 0);
+  const clCanRedo = useClothing((s) => s.future.length > 0);
+  const undo = clothing ? clUndo : accUndo;
+  const redo = clothing ? clRedo : accRedo;
   const preview = useViewport((s) => s.previewMode);
   const setPreview = useViewport((s) => s.setPreviewMode);
   const openModal = useUI((s) => s.openModal);
@@ -158,12 +166,12 @@ export function TopBar() {
 
       <div className="tb-center">
         <Tip label="Undo" shortcut="Ctrl+Z">
-          <button className="btn ghost" disabled={!canUndo} onClick={undo} aria-label="Undo">
+          <button className="btn ghost" disabled={clothing ? !clCanUndo : !canUndo} onClick={undo} aria-label="Undo">
             <Undo2 size={15} /> Undo
           </button>
         </Tip>
         <Tip label="Redo" shortcut="Ctrl+Y">
-          <button className="btn ghost" disabled={!canRedo} onClick={redo} aria-label="Redo">
+          <button className="btn ghost" disabled={clothing ? !clCanRedo : !canRedo} onClick={redo} aria-label="Redo">
             <Redo2 size={15} /> Redo
           </button>
         </Tip>
@@ -173,6 +181,7 @@ export function TopBar() {
             <Save size={15} /> Save
           </button>
         </Tip>
+        {!clothing && (
         <Tip label="Clean preview with animation" shortcut="P">
           <button
             className={`btn ghost ${preview ? 'is-on' : ''}`}
@@ -185,10 +194,11 @@ export function TopBar() {
             <Eye size={15} /> Preview
           </button>
         </Tip>
+        )}
       </div>
 
       <div className="tb-right">
-        <button className="btn primary" onClick={() => openModal('export')}>
+        <button className="btn primary" onClick={() => openModal(clothing ? 'exportClothing' : 'export')}>
           <Upload size={14} /> Export
         </button>
         <Tip label="Settings">

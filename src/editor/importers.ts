@@ -151,9 +151,41 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
 }
 
 export async function handleDroppedFiles(files: File[]): Promise<void> {
+  if (useEditor.getState().screen === 'clothing') {
+    for (const f of files) await uploadClothingImage(f, true);
+    return;
+  }
   for (const f of files) {
     if (/\.(obj|glb|gltf)$/i.test(f.name)) await importModelFile(f);
     else if (f.type.startsWith('image/')) await uploadTexture(f);
     else useUI.getState().toast('warn', `"${f.name}" isn't a supported file. Drop a .obj, .glb, .gltf or image.`);
+  }
+}
+
+// ------------------------------------------------------------------ clothing images
+
+import { useClothing } from '../store/clothing';
+import type { ClothingImage } from '../types';
+
+/** Adds an uploaded picture to the clothing image library, and optionally places it as a layer. */
+export async function uploadClothingImage(file: File, asLayer = true): Promise<ClothingImage | null> {
+  const ui = useUI.getState();
+  try {
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) throw new Error(`"${file.name}" is not a PNG, JPG, WebP or GIF image.`);
+    if (file.size > MAX_TEXTURE_BYTES) throw new Error(`"${file.name}" is larger than 12 MB.`);
+    ui.setBusy('Loading image…');
+    const dataUrl = await readAsDataUrl(file);
+    const { width, height } = await imageSize(dataUrl);
+    const img: ClothingImage = { id: uid('img'), name: file.name.replace(/\.[^.]+$/, ''), dataUrl, width, height };
+    const cl = useClothing.getState();
+    cl.addImage(img);
+    if (asLayer) cl.addLayer('image', { image: img });
+    ui.toast('success', `Added "${img.name}" (${width}×${height})`);
+    return img;
+  } catch (err) {
+    ui.toast('error', err instanceof Error ? err.message : 'Image upload failed.');
+    return null;
+  } finally {
+    useUI.getState().setBusy(null);
   }
 }

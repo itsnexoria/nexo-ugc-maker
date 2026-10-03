@@ -7,6 +7,7 @@ import { useEditor } from '../store/editor';
 import { useViewport } from '../store/viewport';
 import type { AnimationId, RigType, Vec3 } from '../types';
 import { viewportApi } from './api';
+import { ClothingOverlay } from './ClothingOverlay';
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
@@ -55,9 +56,10 @@ interface BoneProps {
   selectedPart: string | null;
   wireframe: boolean;
   lighting: boolean;
+  clothing: boolean;
 }
 
-const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wireframe }: BoneProps) {
+const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wireframe, clothing }: BoneProps) {
   const { def } = node;
   const groupRef = useRef<THREE.Group>(null);
   const select = useEditor((s) => s.selectAvatarPart);
@@ -101,6 +103,7 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
             wireframe={wireframe}
           />
         </RoundedBox>
+        {clothing && <ClothingOverlay bone={def.name} size={def.size} />}
         {isHead && face && (
           <mesh position={[0, 0, -(def.size[2] / 2 + 0.002)]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[def.size[0] * 0.9, def.size[1] * 0.9]} />
@@ -109,7 +112,7 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
         )}
       </group>
       {node.children.map((c) => (
-        <Bone key={c.def.name} node={c} parentJoint={def.joint} face={face} selectedPart={selectedPart} wireframe={wireframe} lighting />
+        <Bone key={c.def.name} node={c} parentJoint={def.joint} face={face} selectedPart={selectedPart} wireframe={wireframe} lighting clothing={clothing} />
       ))}
     </group>
   );
@@ -183,6 +186,7 @@ export function Avatar() {
   const wireframe = useViewport((s) => s.wireframe);
   const lighting = useViewport((s) => s.lighting);
   const visible = useViewport((s) => s.showAvatar);
+  const clothing = useEditor((s) => s.screen === 'clothing');
   const rootRef = useRef<THREE.Group>(null);
   const face = useMemo(() => makeFaceTexture(), []);
   const trees = useMemo(() => buildTree(BONES[rig]), [rig]);
@@ -210,7 +214,7 @@ export function Avatar() {
   return (
     <group ref={rootRef} visible={visible} key={rig}>
       {trees.map((n) => (
-        <Bone key={n.def.name} node={n} parentJoint={rootJoint} face={face} selectedPart={selectedPart} wireframe={wireframe} lighting={lighting} />
+        <Bone key={n.def.name} node={n} parentJoint={rootJoint} face={face} selectedPart={selectedPart} wireframe={wireframe} lighting={lighting} clothing={clothing} />
       ))}
     </group>
   );

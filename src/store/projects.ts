@@ -6,8 +6,10 @@ import * as db from './db';
 const SEEDED_KEY = 'nexo-ugc-seeded-v1';
 
 export function metaFrom(id: string, name: string, createdAt: number, data: ProjectData, thumbnail: string | null): ProjectMeta {
-  const count = Object.values(data.objects).filter((o) => o.kind !== 'group').length;
-  return { id, name, createdAt, updatedAt: Date.now(), objectCount: count, thumbnail };
+  const count = data.clothing
+    ? (['shirt', 'pants', 'tshirt'] as const).reduce((n, k) => n + (data.clothing!.designs[k]?.length ?? 0), 0)
+    : Object.values(data.objects).filter((o) => o.kind !== 'group').length;
+  return { id, kind: data.clothing ? 'clothing' : 'accessory', name, createdAt, updatedAt: Date.now(), objectCount: count, thumbnail };
 }
 
 export async function listProjects(): Promise<ProjectMeta[]> {

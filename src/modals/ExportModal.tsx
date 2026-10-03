@@ -180,7 +180,7 @@ export function ExportModal() {
           </ol>
           <p className="hint">
             Roblox changes these requirements from time to time. Check the current rules in the{' '}
-            <a href="https://create.roblox.com/docs/art/accessories" target="_blank" rel="noreferrer">
+            <a href="https://create.roblox.com/docs" target="_blank" rel="noreferrer">
               Creator Docs <ExternalLink size={11} style={{ verticalAlign: '-1px' }} />
             </a>
             .

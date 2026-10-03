@@ -48,7 +48,7 @@ export interface ProjectInfo {
 }
 
 export interface EditorState {
-  screen: 'boot' | 'home' | 'editor';
+  screen: 'boot' | 'home' | 'editor' | 'clothing';
   project: ProjectInfo;
   /** Bumped by every change that should be persisted */
   revision: number;
@@ -75,6 +75,8 @@ export interface EditorState {
 
   // navigation / project
   setScreen: (s: EditorState['screen']) => void;
+  /** Marks the project as changed (used by the clothing studio, which keeps its own history) */
+  touch: () => void;
   loadProject: (info: { id: string; name: string; createdAt: number; updatedAt?: number }, data: ProjectData) => void;
   serialize: () => ProjectData;
   setProjectName: (name: string) => void;
@@ -205,9 +207,11 @@ export const useEditor = create<EditorState>((set, get) => {
 
     setScreen: (screen) => set({ screen }),
 
+    touch: () => set((s) => ({ revision: s.revision + 1, project: { ...s.project, saveStatus: 'unsaved' } })),
+
     loadProject: (info, data) =>
       set({
-        screen: 'editor',
+        screen: data.clothing ? 'clothing' : 'editor',
         project: {
           id: info.id,
           name: info.name,

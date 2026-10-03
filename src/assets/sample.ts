@@ -5,6 +5,8 @@ import { findAsset } from './presets';
 import { darken } from './materials';
 import { renderBuiltinTexture } from './textures';
 import { uid } from '../utils/ids';
+import { CLOTHING_PRESETS } from '../clothing/presets';
+import type { ClothingData } from '../types';
 import { DEFAULT_LAYERS, instantiate } from '../utils/scene';
 
 export const EXAMPLE_TEXTURE_NAME = 'Circuit panel (example)';
@@ -85,16 +87,37 @@ function emptyData(): ProjectData {
   };
 }
 
-export type ProjectTemplate = 'blank' | 'cyber-crown' | 'hat';
+export type ProjectTemplate = 'blank' | 'cyber-crown' | 'hat' | 'clothing' | 'clothing-cyber';
 
-export const TEMPLATES: { id: ProjectTemplate; name: string; description: string }[] = [
-  { id: 'blank', name: 'Blank', description: 'Just the avatar. Add parts and presets yourself.' },
-  { id: 'cyber-crown', name: 'Cyber Crown', description: 'Chrome crown with red glow accents and a circuit texture.' },
-  { id: 'hat', name: 'Hat starter', description: 'A simple hat to modify.' },
+export const TEMPLATES: { id: ProjectTemplate; name: string; description: string; group: 'accessory' | 'clothing' }[] = [
+  { id: 'blank', name: 'Blank', description: 'Just the avatar. Add parts and presets yourself.', group: 'accessory' },
+  { id: 'cyber-crown', name: 'Cyber Crown', description: 'Chrome crown with red glow accents and a circuit texture.', group: 'accessory' },
+  { id: 'hat', name: 'Hat starter', description: 'A simple hat to modify.', group: 'accessory' },
+  { id: 'clothing', name: 'Blank clothing', description: 'Empty shirt, pants and T-shirt to design.', group: 'clothing' },
+  { id: 'clothing-cyber', name: 'Cyber outfit', description: 'Jacket, track pants and an N badge tee.', group: 'clothing' },
 ];
+
+function clothingData(template: ProjectTemplate): ClothingData {
+  const pick = (id: string) => CLOTHING_PRESETS.find((p) => p.id === id)!.build();
+  const cyber = template === 'clothing-cyber';
+  return {
+    version: 1,
+    designs: {
+      shirt: cyber ? pick('shirt-cyber') : [],
+      pants: cyber ? pick('pants-track') : [],
+      tshirt: cyber ? pick('tshirt-badge') : [],
+    },
+    images: [],
+    activeKind: 'shirt',
+  };
+}
 
 export function buildProject(template: ProjectTemplate): ProjectData {
   const data = emptyData();
+  if (template === 'clothing' || template === 'clothing-cyber') {
+    data.clothing = clothingData(template);
+    return data;
+  }
   const out = { objects: data.objects, order: data.order };
   if (template === 'cyber-crown') {
     const tex = makeExampleTexture();

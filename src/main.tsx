@@ -10,6 +10,7 @@ import './styles/global.css';
 import './styles/fields.css';
 import './styles/overlays.css';
 import './styles/layout.css';
+import './styles/clothing.css';
 import App from './App';
 import { applyTheme, useSettings } from './store/settings';
 
@@ -17,8 +18,8 @@ applyTheme(useSettings.getState().theme);
 
 // Debug handle for automated tests: open the app with ?debug
 if (new URLSearchParams(location.search).has('debug')) {
-  void Promise.all([import('./store/editor'), import('./viewport/api')]).then(([e, v]) => {
-    (window as unknown as Record<string, unknown>).__nexo = { editor: e.useEditor, viewport: v.viewportApi };
+  void Promise.all([import('./store/editor'), import('./viewport/api'), import('./store/clothing')]).then(([e, v, c]) => {
+    (window as unknown as Record<string, unknown>).__nexo = { editor: e.useEditor, viewport: v.viewportApi, clothing: c.useClothing };
   });
 }
 

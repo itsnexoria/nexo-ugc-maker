@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { duplicateSelection, focusSelection, requestDelete, startRename } from '../editor/actions';
 import { useEditor } from '../store/editor';
+import { useClothing } from '../store/clothing';
 import { useSettings } from '../store/settings';
 import { saveNow } from '../store/session';
 import { useUI } from '../store/ui';
@@ -8,10 +9,63 @@ import { CAMERA_TARGET, CAMERA_VIEWS, DEFAULT_CAMERA, useViewport, type CameraVi
 
 const VIEW_KEYS: CameraViewId[] = ['front', 'back', 'left', 'right', 'threeQuarter'];
 
+function handleClothingKey(e: KeyboardEvent) {
+  const t = e.target as HTMLElement | null;
+  const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);
+  const ui = useUI.getState();
+  const cl = useClothing.getState();
+  const mod = e.ctrlKey || e.metaKey;
+  const key = e.key.toLowerCase();
+  if (mod && key === 's') {
+    e.preventDefault();
+    void saveNow(true);
+    return;
+  }
+  if (typing || ui.modal || ui.confirm || ui.prompt) return;
+  if (mod && key === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) cl.redo();
+    else cl.undo();
+    return;
+  }
+  if (mod && key === 'y') {
+    e.preventDefault();
+    cl.redo();
+    return;
+  }
+  if (mod && key === 'd') {
+    e.preventDefault();
+    if (cl.selectedId) cl.duplicateLayer(cl.selectedId);
+    return;
+  }
+  if (mod || e.altKey) return;
+  if ((e.key === 'Delete' || e.key === 'Backspace') && cl.selectedId) {
+    e.preventDefault();
+    cl.removeLayer(cl.selectedId);
+    return;
+  }
+  if (e.key === 'Escape') {
+    cl.select(null);
+    cl.setTool('select');
+    return;
+  }
+  if (e.key === '?') {
+    ui.openModal('shortcuts');
+    return;
+  }
+  const tools: Record<string, 'select' | 'place' | 'brush' | 'eraser'> = { v: 'select', p: 'place', b: 'brush', e: 'eraser' };
+  if (tools[key]) cl.setTool(tools[key]);
+  else if (key === 't') cl.addLayer('text');
+}
+
 export function useShortcuts(): void {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const ed = useEditor.getState();
+      if (ed.screen === 'clothing') {
+        handleClothingKey(e);
+        return;
+      }
       if (ed.screen !== 'editor') return;
       const t = e.target as HTMLElement | null;
       const typing = !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable);

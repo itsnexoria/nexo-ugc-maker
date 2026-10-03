@@ -13,13 +13,13 @@ import { SceneObjects } from './SceneObjects';
 import { viewportApi } from './api';
 import { handleDroppedFiles } from '../editor/importers';
 
-const QUALITY: Record<Quality, { dpr: number; shadow: number; antialias: boolean }> = {
+export const QUALITY: Record<Quality, { dpr: number; shadow: number; antialias: boolean }> = {
   low: { dpr: 1, shadow: 512, antialias: false },
   medium: { dpr: 1.5, shadow: 1024, antialias: true },
   high: { dpr: 2, shadow: 2048, antialias: true },
 };
 
-function Studio() {
+export function Studio() {
   const lighting = useViewport((s) => s.lighting);
   const ambient = useSettings((s) => s.ambient);
   const shadows = useSettings((s) => s.shadows);
@@ -77,7 +77,7 @@ function Studio() {
   );
 }
 
-function Floor() {
+export function Floor() {
   const showGrid = useSettings((s) => s.showGrid);
   const gridSize = useSettings((s) => s.gridSize);
   const theme = useSettings((s) => s.theme);
@@ -102,7 +102,7 @@ function Floor() {
 }
 
 /** Registers renderer handles, applies sensitivity, eases camera moves, and stores the last camera. */
-function CameraRig({ controlsRef }: { controlsRef: React.RefObject<OrbitControlsImpl> }) {
+export function CameraRig({ controlsRef }: { controlsRef: React.RefObject<OrbitControlsImpl> }) {
   const { gl, scene, camera } = useThree();
   const request = useViewport((s) => s.cameraRequest);
   const sensitivity = useSettings((s) => s.cameraSensitivity);

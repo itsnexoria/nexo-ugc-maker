@@ -1,6 +1,7 @@
 import { useEditor } from './editor';
 import { useSettings } from './settings';
 import { useUI } from './ui';
+import { useClothing } from './clothing';
 import * as projects from './projects';
 import { viewportApi } from '../viewport/api';
 import type { ProjectMeta } from '../types';
@@ -16,7 +17,7 @@ let needsThumb = false;
 
 export async function saveNow(manual = false): Promise<boolean> {
   const ed = useEditor.getState();
-  if (ed.screen !== 'editor' || !ed.project.id) return false;
+  if ((ed.screen !== 'editor' && ed.screen !== 'clothing') || !ed.project.id) return false;
   if (saving) await saving;
   if (saveTimer) {
     clearTimeout(saveTimer);
@@ -27,7 +28,7 @@ export async function saveNow(manual = false): Promise<boolean> {
     const cur = useEditor.getState();
     const revisionAtSave = cur.revision;
     try {
-      const data = cur.serialize();
+      const data = cur.screen === 'clothing' ? { ...cur.serialize(), clothing: useClothing.getState().serialize() } : cur.serialize();
       const thumb = viewportApi.captureThumbnail();
       const meta = await projects.saveProject(cur.project.id, cur.project.name, cur.project.createdAt, data, thumb);
       const now = useEditor.getState();
@@ -55,7 +56,7 @@ function scheduleAutosave() {
 
 export function startAutosave(): () => void {
   return useEditor.subscribe((state, prev) => {
-    if (state.screen !== 'editor' || state.revision === prev.revision) return;
+    if ((state.screen !== 'editor' && state.screen !== 'clothing') || state.revision === prev.revision) return;
     if (!useSettings.getState().autoSave) return;
     scheduleAutosave();
   });
@@ -71,6 +72,7 @@ export async function openProject(id: string): Promise<boolean> {
       return false;
     }
     needsThumb = !found.meta.thumbnail;
+    if (found.data.clothing) useClothing.getState().load(found.data.clothing);
     useEditor.getState().loadProject(
       { id: found.meta.id, name: found.meta.name, createdAt: found.meta.createdAt, updatedAt: found.meta.updatedAt },
       found.data,
@@ -99,7 +101,8 @@ export async function createAndOpen(name: string, template: ProjectTemplate): Pr
 }
 
 export async function goHome(): Promise<void> {
-  if (useEditor.getState().screen === 'editor' && useEditor.getState().project.saveStatus !== 'saved') {
+  const sc = useEditor.getState().screen;
+  if ((sc === 'editor' || sc === 'clothing') && useEditor.getState().project.saveStatus !== 'saved') {
     await saveNow(false);
   }
   useEditor.getState().setScreen('home');

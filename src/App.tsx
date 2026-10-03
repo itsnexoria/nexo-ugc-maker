@@ -7,6 +7,8 @@ import { ViewportOverlay } from './components/ViewportOverlay';
 import { BusyOverlay, ConfirmHost, ContextMenuHost, PromptHost, ToastHost } from './components/ui/Overlays';
 import { Home } from './home/Home';
 import { ExportModal } from './modals/ExportModal';
+import { ExportClothingModal } from './modals/ExportClothingModal';
+import { ClothingWorkspace } from './clothing/ClothingEditor';
 import { NewProjectModal, OpenProjectModal } from './modals/ProjectModals';
 import { AboutModal, ShortcutsModal } from './modals/InfoModals';
 import { SettingsModal } from './modals/SettingsModal';
@@ -94,7 +96,8 @@ export default function App() {
       if (document.visibilityState === 'hidden' && useEditor.getState().project.saveStatus === 'unsaved' && useSettings.getState().autoSave) void saveNow(false);
     };
     const onUnload = (e: BeforeUnloadEvent) => {
-      if (useEditor.getState().screen === 'editor' && useEditor.getState().project.saveStatus !== 'saved') {
+      const sc = useEditor.getState().screen;
+      if ((sc === 'editor' || sc === 'clothing') && useEditor.getState().project.saveStatus !== 'saved') {
         e.preventDefault();
         e.returnValue = '';
       }
@@ -121,8 +124,10 @@ export default function App() {
       )}
       {screen === 'home' && <Home />}
       {screen === 'editor' && <Workspace />}
+      {screen === 'clothing' && <ClothingWorkspace />}
       {modal === 'settings' && <SettingsModal />}
       {modal === 'export' && <ExportModal />}
+      {modal === 'exportClothing' && <ExportClothingModal />}
       {modal === 'new' && <NewProjectModal />}
       {modal === 'open' && <OpenProjectModal />}
       {modal === 'shortcuts' && <ShortcutsModal />}

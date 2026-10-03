@@ -81,6 +81,8 @@ export interface CameraState {
 
 export interface ProjectData {
   version: 1;
+  /** Present on clothing projects. Accessory projects leave it undefined. */
+  clothing?: ClothingData;
   objects: Record<string, SceneObject>;
   order: string[];
   layers: Layer[];
@@ -92,6 +94,7 @@ export interface ProjectData {
 
 export interface ProjectMeta {
   id: string;
+  kind?: 'accessory' | 'clothing';
   name: string;
   createdAt: number;
   updatedAt: number;
@@ -146,4 +149,109 @@ export interface LogEntry {
   time: number;
   level: LogLevel;
   message: string;
+}
+
+// ---------------------------------------------------------------- clothing
+
+export type ClothingKind = 'shirt' | 'pants' | 'tshirt';
+export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay';
+export type PatternId = 'stripes' | 'checker' | 'dots' | 'grid' | 'camo' | 'zigzag';
+export type ShapeType = 'rect' | 'ellipse' | 'triangle' | 'diamond' | 'star' | 'hexagon';
+
+export interface ClothingLayerBase {
+  id: string;
+  name: string;
+  visible: boolean;
+  locked: boolean;
+  opacity: number;
+  blend: BlendMode;
+  /** 'all', a body-part group id (torso, rightArm...) or a single panel id (torso.front) */
+  clip: string;
+}
+
+export interface FillLayer extends ClothingLayerBase {
+  type: 'fill';
+  color: string;
+  /** Second colour makes a linear gradient */
+  color2: string | null;
+  angle: number;
+}
+
+export interface PatternLayer extends ClothingLayerBase {
+  type: 'pattern';
+  pattern: PatternId;
+  color: string;
+  color2: string;
+  size: number;
+  angle: number;
+}
+
+export interface ImageLayer extends ClothingLayerBase {
+  type: 'image';
+  imageId: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  flipX: boolean;
+}
+
+export interface TextLayer extends ClothingLayerBase {
+  type: 'text';
+  text: string;
+  font: string;
+  size: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  stroke: string;
+  strokeWidth: number;
+  align: 'left' | 'center' | 'right';
+  x: number;
+  y: number;
+  rotation: number;
+}
+
+export interface ShapeLayer extends ClothingLayerBase {
+  type: 'shape';
+  shape: ShapeType;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  rotation: number;
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  radius: number;
+}
+
+export interface Stroke {
+  color: string;
+  size: number;
+  erase: boolean;
+  points: [number, number][];
+}
+
+export interface PaintLayer extends ClothingLayerBase {
+  type: 'paint';
+  strokes: Stroke[];
+}
+
+export type ClothingLayer = FillLayer | PatternLayer | ImageLayer | TextLayer | ShapeLayer | PaintLayer;
+
+export interface ClothingImage {
+  id: string;
+  name: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
+export interface ClothingData {
+  version: 1;
+  designs: Record<ClothingKind, ClothingLayer[]>;
+  images: ClothingImage[];
+  activeKind: ClothingKind;
 }

@@ -4,7 +4,7 @@ import type { AssetCategory, LogEntry, LogLevel } from '../types';
 
 export type BottomTab = 'scene' | 'objects' | 'materials' | 'textures' | 'layers' | 'assets' | 'console';
 export type RightTab = 'properties' | 'validation';
-export type ModalId = 'settings' | 'export' | 'new' | 'open' | 'shortcuts' | 'about' | null;
+export type ModalId = 'settings' | 'export' | 'exportClothing' | 'new' | 'open' | 'shortcuts' | 'about' | null;
 
 export interface MenuItem {
   label?: string;
