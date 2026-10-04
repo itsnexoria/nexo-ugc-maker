@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { BONES } from '../assets/avatar';
 import type { ClothingKind, RigType, Vec3 } from '../types';
 import { TEMPLATES, panelFor, type FaceId, type PartId } from './templates';
 
@@ -20,35 +19,50 @@ const R6_PARTS: Record<string, PartId> = {
   'Left Leg': 'leftLeg',
 };
 
-type Chain = { part: PartId; bones: string[] };
-
-const R15_CHAINS: Chain[] = [
-  { part: 'torso', bones: ['LowerTorso', 'UpperTorso'] },
-  { part: 'rightArm', bones: ['RightHand', 'RightLowerArm', 'RightUpperArm'] },
-  { part: 'leftArm', bones: ['LeftHand', 'LeftLowerArm', 'LeftUpperArm'] },
-  { part: 'rightLeg', bones: ['RightFoot', 'RightLowerLeg', 'RightUpperLeg'] },
-  { part: 'leftLeg', bones: ['LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg'] },
-];
+type Chain = { part: PartId; bones: string[]; /** share of the 128 px panel height per bone, bottom first */ shares: number[] };
 
 /**
- * Splits each classic-clothing panel across the R15 segments in proportion to their height.
- * Roblox does its own R15 composition; this is an approximation for previewing only.
+ * Limb panels are split 64 px upper / 48 px lower / 16 px hand or foot, following the
+ * R15 guidance on the Roblox DevForum ("Classic Clothing UV Mapping Guidelines [R15]").
+ * The torso split follows the segment heights (LowerTorso 0.4 of 2.0 studs). Roblox does not
+ * publish the exact torso line, so treat that one as an approximation.
  */
+export const R15_LIMB_SHARES = [16 / 128, 48 / 128, 64 / 128];
+export const R15_TORSO_SHARES = [0.2, 0.8];
+
+const R15_CHAINS: Chain[] = [
+  { part: 'torso', bones: ['LowerTorso', 'UpperTorso'], shares: R15_TORSO_SHARES },
+  { part: 'rightArm', bones: ['RightHand', 'RightLowerArm', 'RightUpperArm'], shares: R15_LIMB_SHARES },
+  { part: 'leftArm', bones: ['LeftHand', 'LeftLowerArm', 'LeftUpperArm'], shares: R15_LIMB_SHARES },
+  { part: 'rightLeg', bones: ['RightFoot', 'RightLowerLeg', 'RightUpperLeg'], shares: R15_LIMB_SHARES },
+  { part: 'leftLeg', bones: ['LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg'], shares: R15_LIMB_SHARES },
+];
+
+/** Joint lines (template px from the panel top) where R15 segments meet, for the 2D guides. */
+export function r15JointOffsets(part: PartId): number[] {
+  const shares = part === 'torso' ? R15_TORSO_SHARES : R15_LIMB_SHARES;
+  const out: number[] = [];
+  let below = 0;
+  for (let i = 0; i < shares.length - 1; i++) {
+    below += shares[i];
+    out.push(128 * (1 - below));
+  }
+  return out;
+}
+
+/** How each R15 segment samples the classic-clothing panels. */
 export function bodyMapFor(rig: RigType, bone: string): BodyMap | null {
   if (rig === 'R6') {
     const part = R6_PARTS[bone];
     return part ? { part, slice: [0, 1], top: true, bottom: true } : null;
   }
-  const bones = BONES.R15;
   for (const chain of R15_CHAINS) {
     const idx = chain.bones.indexOf(bone);
     if (idx < 0) continue;
-    const heights = chain.bones.map((n) => bones.find((b) => b.name === n)?.size[1] ?? 1);
-    const total = heights.reduce((a, b) => a + b, 0);
-    const below = heights.slice(0, idx).reduce((a, b) => a + b, 0);
+    const below = chain.shares.slice(0, idx).reduce((a, b) => a + b, 0);
     return {
       part: chain.part,
-      slice: [below / total, (below + heights[idx]) / total],
+      slice: [below, below + chain.shares[idx]],
       top: idx === chain.bones.length - 1,
       bottom: idx === 0,
     };

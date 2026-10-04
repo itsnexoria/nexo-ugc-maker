@@ -5,7 +5,9 @@ import { useValidation } from '../hooks/useValidation';
 import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { downloadBlob, safeFilename } from '../utils/download';
-import { runExport, UNIT_SCALE, type ExportFormat, type ExportUnits } from '../utils/exporter';
+import { primaryRoot, runExport, UNIT_SCALE, type ExportFormat, type ExportUnits } from '../utils/exporter';
+import { robloxAttachmentFor } from '../assets/avatar';
+import type { AtlasSize } from '../utils/bake';
 
 const FORMATS: { id: ExportFormat; name: string; note: string }[] = [
   { id: 'glb', name: 'GLB', note: 'One binary file with geometry, materials and textures. Best for Blender and Roblox Studio.' },
@@ -22,6 +24,11 @@ export function ExportModal() {
   const [units, setUnits] = useState<ExportUnits>('studs');
   const [avatar, setAvatar] = useState(false);
   const [hidden, setHidden] = useState(false);
+  const [merge, setMerge] = useState(true);
+  const [atlas, setAtlas] = useState<AtlasSize>(1024);
+  const [center, setCenter] = useState(true);
+  const rootObj = useEditor((st) => primaryRoot({ objects: st.objects, order: st.order }));
+  const attachment = rootObj?.slot ? robloxAttachmentFor(rootObj.slot, rootObj.position[0]) : 'BodyFrontAttachment';
   const [filename, setFilename] = useState(safeFilename(projectName));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +43,11 @@ export function ExportModal() {
       const s = useEditor.getState();
       const result = await runExport(
         { objects: s.objects, order: s.order, layers: s.layers, textures: s.textures, models: s.models, rig: s.rig },
-        { format, units, includeAvatar: avatar, includeHidden: hidden, filename: filename.trim() || 'accessory' },
+        { format, units, includeAvatar: avatar, includeHidden: hidden, filename: filename.trim() || 'accessory', merge, atlasSize: atlas, centerOnAttachment: center },
       );
       downloadBlob(result.blob, result.filename);
-      toast('success', `Exported ${result.filename} (${result.parts} parts, ${result.triangles.toLocaleString()} triangles)`);
+      toast('success', `Exported ${result.filename} (${merge ? 'one mesh from ' : ''}${result.parts} parts, ${result.triangles.toLocaleString()} triangles)`);
+      if (result.attachment) useUI.getState().log('info', `Suggested Roblox attachment: ${result.attachment}`);
       close();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Export failed.';
@@ -94,7 +102,29 @@ export function ExportModal() {
             </select>
           </div>
           <label className="check">
-            <input type="checkbox" checked={avatar} onChange={(e) => setAvatar(e.target.checked)} /> Include the avatar mannequin as a reference
+            <input type="checkbox" checked={merge} onChange={(e) => setMerge(e.target.checked)} /> Join into one mesh with one baked texture (Roblox-ready)
+          </label>
+          {merge && (
+            <div className="col" style={{ gap: 8, paddingLeft: 22 }}>
+              <div className="row">
+                <label htmlFor="exp-atlas" className="dim" style={{ width: 90 }}>
+                  Texture size
+                </label>
+                <select id="exp-atlas" className="select" value={atlas} onChange={(e) => setAtlas(parseInt(e.target.value, 10) as AtlasSize)}>
+                  <option value={512}>512 × 512</option>
+                  <option value={1024}>1024 × 1024 (Roblox maximum)</option>
+                </select>
+              </div>
+              <label className="check">
+                <input type="checkbox" checked={center} onChange={(e) => setCenter(e.target.checked)} /> Put the origin at the attachment point
+              </label>
+              <p className="hint">
+                Suggested Roblox attachment: <strong>{attachment}</strong>. Colors and glow are baked into the texture. Metalness, roughness and soft transparency are not carried over, because classic accessories use a plain texture.
+              </p>
+            </div>
+          )}
+          <label className="check">
+            <input type="checkbox" checked={avatar} onChange={(e) => setAvatar(e.target.checked)} disabled={merge} /> Include the avatar mannequin as a reference{merge ? ' (separate export only)' : ''}
           </label>
           <label className="check">
             <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> Include hidden parts and layers
@@ -145,6 +175,7 @@ export function ExportModal() {
               </div>
               <ul>
                 <li>Real {format.toUpperCase()} geometry with names, transforms and units</li>
+                {merge && <li>One joined mesh and one baked texture atlas</li>}
                 <li>Materials (colour, metal, roughness, glow) and textures</li>
                 <li>Triangle, size and texture checks against Roblox's published limits</li>
               </ul>
@@ -154,8 +185,8 @@ export function ExportModal() {
                 <Info size={14} /> Still needed in Roblox
               </div>
               <ul>
-                <li>One joined mesh and one baked texture</li>
-                <li>Attachment point and fit on the avatar</li>
+                {!merge && <li>One joined mesh and one baked texture</li>}
+                <li>Creating the Attachment and fitting it on the avatar</li>
                 <li>Roblox validation, moderation and upload</li>
               </ul>
             </div>
@@ -166,13 +197,13 @@ export function ExportModal() {
               <strong>Export</strong> a GLB (or the OBJ zip) from this dialog.
             </li>
             <li>
-              <strong>Prepare the mesh</strong> in Blender or similar: join the parts into one mesh, UV-unwrap it and bake the colours into a single texture of 1024×1024 or smaller. Roblox accessories use one mesh and one texture.
+              <strong>Check the mesh</strong>. With the join option on, you already get one mesh and one texture of 1024×1024 or smaller. Otherwise join the parts and bake a texture in Blender or similar. Roblox accessories use one mesh and one texture.
             </li>
             <li>
               <strong>Import into Roblox Studio</strong> with the 3D Importer, then check the size against a Roblox avatar. The accessory faces −Z, like Roblox characters.
             </li>
             <li>
-              <strong>Fit it</strong> using Studio's avatar and accessory tools, and set the attachment for its slot (for example the hat attachment on the head).
+              <strong>Fit it</strong> using Studio's avatar and accessory tools, and add the attachment for its slot ({attachment} here, positioned at the file's origin when you export with the attachment option).
             </li>
             <li>
               <strong>Upload</strong> through the Creator Hub. Roblox runs its own validation and moderation, and UGC uploading has eligibility requirements.

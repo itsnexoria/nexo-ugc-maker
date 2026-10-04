@@ -10,7 +10,7 @@ import { useEditor } from '../store/editor';
 import { useLive } from '../store/live';
 import { useUI } from '../store/ui';
 import { useUserAssets } from '../store/userAssets';
-import { SHAPE_LABELS, getModelGeometry, getPrimitiveGeometry, triangleCount } from '../utils/geometry';
+import { LOW_POLY_KINDS, SHAPE_LABELS, getModelGeometry, getPrimitiveGeometry, triangleCount } from '../utils/geometry';
 import { toSpec } from '../utils/scene';
 import type { SceneObject, SlotId, Vec3 } from '../types';
 
@@ -79,13 +79,14 @@ function ObjectSection({ obj }: { obj: SceneObject }) {
   const updateObject = useEditor((s) => s.updateObject);
   const setTransform = useEditor((s) => s.setTransform);
   const rename = useEditor((s) => s.renameObject);
+  const setDetail = useEditor((s) => s.setDetail);
   const addUser = useUserAssets((s) => s.add);
   const askText = useUI((s) => s.askText);
   const toast = useUI((s) => s.toast);
   const [name, setName] = useState(obj.name);
   useEffect(() => setName(obj.name), [obj.name, obj.id]);
 
-  const tris = obj.kind === 'group' ? null : triangleCount(obj.kind === 'imported' ? (obj.modelId && models[obj.modelId] ? getModelGeometry(models[obj.modelId]) : getPrimitiveGeometry('cube')) : getPrimitiveGeometry(obj.kind));
+  const tris = obj.kind === 'group' ? null : triangleCount(obj.kind === 'imported' ? (obj.modelId && models[obj.modelId] ? getModelGeometry(models[obj.modelId]) : getPrimitiveGeometry('cube')) : getPrimitiveGeometry(obj.kind, obj.detail));
 
   return (
     <Section title="Object">
@@ -119,6 +120,15 @@ function ObjectSection({ obj }: { obj: SceneObject }) {
           </>
         )}
       </div>
+      {LOW_POLY_KINDS.includes(obj.kind) && (
+        <div className="field">
+          <label htmlFor="obj-detail">Detail</label>
+          <select id="obj-detail" className="select" value={obj.detail ?? 'normal'} onChange={(e) => setDetail(obj.id, e.target.value as 'low' | 'normal')}>
+            <option value="normal">Normal</option>
+            <option value="low">Low-poly (far fewer triangles)</option>
+          </select>
+        </div>
+      )}
       <div className="field">
         <label htmlFor="obj-layer">Layer</label>
         <select id="obj-layer" className="select" value={obj.layerId} onChange={(e) => setLayer(obj.id, e.target.value)}>

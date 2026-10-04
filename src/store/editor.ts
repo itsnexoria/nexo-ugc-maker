@@ -20,7 +20,8 @@ import type {
 } from '../types';
 import { applyPresetToMaterial, DEFAULT_MATERIAL } from '../assets/materials';
 import { SLOT_ANCHORS } from '../assets/avatar';
-import { SHAPE_LABELS } from '../utils/geometry';
+import { LOW_POLY_KINDS, SHAPE_LABELS } from '../utils/geometry';
+import { objectTriangles } from '../utils/validation';
 import { uid } from '../utils/ids';
 import { decomposeMatrix, isFiniteVec, localMatrix, subVec, worldMatrix } from '../utils/math';
 import {
@@ -107,6 +108,9 @@ export interface EditorState {
   removeObject: (id: string) => void;
   reparent: (id: string, newParentId: string | null) => void;
   setRig: (rig: RigType) => void;
+  setDetail: (id: string, detail: 'low' | 'normal') => void;
+  /** Switches the heaviest primitives to low-poly until the visible triangle count fits the budget. */
+  optimizeTriangles: (budget: number) => { before: number; after: number; changed: number };
 
   // layers
   addLayer: (name: string) => void;
@@ -479,6 +483,34 @@ export const useEditor = create<EditorState>((set, get) => {
         project: { ...s.project, saveStatus: 'unsaved' },
       });
       useUI.getState().log('info', `Switched rig ${prevRig} → ${rig}`);
+    },
+
+    setDetail: (id, detail) => {
+      const objects = patchObject(id, { detail });
+      if (objects) commit(detail === 'low' ? 'Switched to low-poly' : 'Switched to normal detail', { objects });
+    },
+
+    optimizeTriangles: (budget) => {
+      const s = get();
+      const tris = (o: SceneObject) => objectTriangles(o, s.models);
+      const visible = Object.values(s.objects).filter((o) => o.kind !== 'group' && o.visible);
+      const before = visible.reduce((n, o) => n + tris(o), 0);
+      let total = before;
+      const objects = { ...s.objects };
+      let changed = 0;
+      const candidates = visible
+        .filter((o) => o.detail !== 'low' && LOW_POLY_KINDS.includes(o.kind))
+        .sort((a, b) => tris(b) - tris(a));
+      for (const o of candidates) {
+        if (total <= budget) break;
+        const saved = tris(o) - tris({ ...o, detail: 'low' });
+        if (saved <= 0) continue;
+        objects[o.id] = { ...o, detail: 'low' };
+        total -= saved;
+        changed += 1;
+      }
+      if (changed) commit(`Reduced triangles ${before} → ${total}`, { objects });
+      return { before, after: total, changed };
     },
 
     // ------------------------------------------------------------------ layers

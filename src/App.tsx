@@ -20,6 +20,8 @@ import { captureMissingThumbnail, saveNow, startAutosave } from './store/session
 import { seedIfFirstRun } from './store/projects';
 import { useUI } from './store/ui';
 import { useViewport } from './store/viewport';
+import { Tour, tourSeen } from './components/Tour';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { Viewport } from './viewport/Viewport';
 
 function Workspace() {
@@ -28,7 +30,13 @@ function Workspace() {
 
   useEffect(() => {
     const t = setTimeout(() => void captureMissingThumbnail(), 1800);
-    return () => clearTimeout(t);
+    const tour = setTimeout(() => {
+      if (!tourSeen('accessory') && !useUI.getState().modal) useUI.getState().startTour('accessory');
+    }, 1200);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(tour);
+    };
   }, [projectId]);
 
   return (
@@ -103,15 +111,18 @@ export default function App() {
       }
     };
     const onError = (e: ErrorEvent) => useUI.getState().log('error', `${e.message}`);
+    const onRejection = (e: PromiseRejectionEvent) => useUI.getState().log('error', `Unhandled: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}`);
     document.addEventListener('visibilitychange', onHide);
     window.addEventListener('beforeunload', onUnload);
     window.addEventListener('error', onError);
+    window.addEventListener('unhandledrejection', onRejection);
     return () => {
       cancelled = true;
       stop();
       document.removeEventListener('visibilitychange', onHide);
       window.removeEventListener('beforeunload', onUnload);
       window.removeEventListener('error', onError);
+      window.removeEventListener('unhandledrejection', onRejection);
     };
   }, []);
 
@@ -132,6 +143,7 @@ export default function App() {
       {modal === 'open' && <OpenProjectModal />}
       {modal === 'shortcuts' && <ShortcutsModal />}
       {modal === 'about' && <AboutModal />}
+      <Tour />
       <ConfirmHost />
       <PromptHost />
       <ContextMenuHost />

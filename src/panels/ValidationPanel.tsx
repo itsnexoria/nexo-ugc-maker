@@ -1,6 +1,7 @@
 import { AlertTriangle, CheckCircle2, Info, RefreshCw, XCircle } from 'lucide-react';
 import { useValidation } from '../hooks/useValidation';
 import { useEditor } from '../store/editor';
+import { useUI } from '../store/ui';
 import { LIMITS, type Severity } from '../utils/validation';
 
 const ICON: Record<Severity, JSX.Element> = {
@@ -13,6 +14,7 @@ const ICON: Record<Severity, JSX.Element> = {
 export function ValidationPanel() {
   const report = useValidation();
   const select = useEditor((s) => s.select);
+  const optimize = useEditor((s) => s.optimizeTriangles);
   const status = report.errors ? 'err' : report.warnings ? 'warn' : 'ok';
   const headline = report.errors
     ? `${report.errors} problem${report.errors === 1 ? '' : 's'} to fix`
@@ -44,6 +46,22 @@ export function ValidationPanel() {
           <span className="num">{report.size ? report.size.map((n) => Math.round(n * 100) / 100).join(' × ') : '—'}</span>
         </div>
       </div>
+      {report.triangles > LIMITS.warnTriangles && (
+        <div style={{ padding: '0 12px 10px' }}>
+          <button
+            className="btn sm"
+            onClick={() => {
+              const r = optimize(Math.floor(LIMITS.maxTriangles * 0.85));
+              if (!r.changed) useUI.getState().toast('warn', 'Nothing left to reduce automatically. Remove parts or merge shapes by hand.');
+              else if (r.after > LIMITS.maxTriangles) useUI.getState().toast('warn', `Reduced triangles from ${r.before.toLocaleString()} to ${r.after.toLocaleString()}, but that is still over ${LIMITS.maxTriangles.toLocaleString()}. Remove or merge some parts by hand.`, { label: 'Undo', onClick: () => useEditor.getState().undo() });
+              else useUI.getState().toast('success', `Reduced triangles from ${r.before.toLocaleString()} to ${r.after.toLocaleString()} (${r.changed} part${r.changed === 1 ? '' : 's'} set to low-poly)`, { label: 'Undo', onClick: () => useEditor.getState().undo() });
+            }}
+          >
+            Reduce triangles automatically
+          </button>
+          <p className="hint" style={{ marginTop: 4 }}>Switches the heaviest shapes to low-poly until the total fits under {Math.floor(LIMITS.maxTriangles * 0.85).toLocaleString()}. One undo step.</p>
+        </div>
+      )}
       <ul className="val-list">
         {report.results.map((r) => (
           <li key={r.id}>

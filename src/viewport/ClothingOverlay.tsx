@@ -15,7 +15,7 @@ const INFLATE: Record<ClothingKind, number> = { pants: 0.02, shirt: 0.045, tshir
 const ORDER: Record<ClothingKind, number> = { pants: 1, shirt: 2, tshirt: 3 };
 
 /** Active stroke while painting directly on the 3D model */
-let stroke: { layerId: string; index: number; panelId: string } | null = null;
+let stroke: { layerId: string; index: number; mirrorIndex: number | null; panelId: string } | null = null;
 
 function uvToTemplate(kind: ClothingKind, e: ThreeEvent<PointerEvent | MouseEvent>): [number, number] | null {
   if (!e.uv) return null;
@@ -46,7 +46,7 @@ function useHandlers(kind: ClothingKind) {
           (e.target as Element).setPointerCapture?.(e.pointerId);
           const s = useClothing.getState();
           const r = s.beginStroke({ color: s.brush.color, size: s.brush.size, erase: tool === 'eraser', points: [pt] });
-          stroke = { layerId: r.layerId, index: r.index, panelId: panel.id };
+          stroke = { layerId: r.layerId, index: r.index, mirrorIndex: r.mirrorIndex, panelId: panel.id };
         }
       : undefined,
     onPointerMove: paint
@@ -60,10 +60,10 @@ function useHandlers(kind: ClothingKind) {
           // crossing onto another panel starts a new stroke so no line is drawn across the template
           if (panel.id !== stroke.panelId) {
             const r = s.beginStroke({ color: s.brush.color, size: s.brush.size, erase: tool === 'eraser', points: [pt] });
-            stroke = { layerId: r.layerId, index: r.index, panelId: panel.id };
+            stroke = { layerId: r.layerId, index: r.index, mirrorIndex: r.mirrorIndex, panelId: panel.id };
             return;
           }
-          s.extendStroke(stroke.layerId, stroke.index, pt);
+          s.extendStroke(stroke.layerId, stroke.index, pt, stroke.mirrorIndex);
         }
       : undefined,
     onPointerUp: paint

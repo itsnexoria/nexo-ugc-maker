@@ -112,8 +112,8 @@ const MeshPart = memo(function MeshPart({ obj, pickable }: { obj: SceneObject; p
   const model = useEditor((s) => (obj.modelId ? s.models[obj.modelId] : undefined));
   const geometry = useMemo(() => {
     if (obj.kind === 'imported') return model ? getModelGeometry(model) : getPrimitiveGeometry('cube');
-    return getPrimitiveGeometry(obj.kind);
-  }, [obj.kind, model]);
+    return getPrimitiveGeometry(obj.kind, obj.detail);
+  }, [obj.kind, obj.detail, model]);
 
   const id = obj.id;
   return (

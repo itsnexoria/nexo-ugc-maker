@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { tourSeen } from '../components/Tour';
 import { ChevronDown, ChevronUp, Grid3x3, Maximize, RotateCcw } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Tip } from '../components/ui/Tooltip';
@@ -151,6 +152,13 @@ function Bottom() {
 export function ClothingWorkspace() {
   const mode = useClothing((s) => s.viewMode);
   const [dragOver, setDragOver] = useState(false);
+  const projectId = useEditor((s) => s.project.id);
+  useEffect(() => {
+    const t = setTimeout(() => {
+      if (!tourSeen('clothing') && !useUI.getState().modal) useUI.getState().startTour('clothing');
+    }, 1200);
+    return () => clearTimeout(t);
+  }, [projectId]);
   return (
     <div className="app clothing">
       <TopBar mode="clothing" />

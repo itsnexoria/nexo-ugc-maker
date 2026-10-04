@@ -33,7 +33,7 @@ export function ObjectsTab() {
           let size = '—';
           let tris = 0;
           if (o.kind !== 'group') {
-            const g = o.kind === 'imported' ? (o.modelId && models[o.modelId] ? getModelGeometry(models[o.modelId]) : null) : getPrimitiveGeometry(o.kind);
+            const g = o.kind === 'imported' ? (o.modelId && models[o.modelId] ? getModelGeometry(models[o.modelId]) : null) : getPrimitiveGeometry(o.kind, o.detail);
             if (g?.boundingBox) {
               const b = g.boundingBox;
               size = [(b.max.x - b.min.x) * o.scale[0], (b.max.y - b.min.y) * o.scale[1], (b.max.z - b.min.z) * o.scale[2]].map((n) => Math.round(n * 100) / 100).join(' × ');

@@ -152,7 +152,23 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
 
 export async function handleDroppedFiles(files: File[]): Promise<void> {
   if (useEditor.getState().screen === 'clothing') {
-    for (const f of files) await uploadClothingImage(f, true);
+    for (const f of files) {
+      if (!f.type.startsWith('image/')) {
+        useUI.getState().toast('warn', `"${f.name}" isn't an image.`);
+        continue;
+      }
+      const kind = useClothing.getState().activeKind;
+      const spec = TEMPLATES[kind];
+      let looksLikeTemplate = false;
+      try {
+        const size = await imageSize(await readAsDataUrl(f));
+        looksLikeTemplate = kind !== 'tshirt' && size.width === spec.width && size.height === spec.height;
+      } catch {
+        /* handled by the upload below */
+      }
+      if (looksLikeTemplate) await importClothingTemplate(f);
+      else await uploadClothingImage(f, true);
+    }
     return;
   }
   for (const f of files) {
@@ -166,6 +182,7 @@ export async function handleDroppedFiles(files: File[]): Promise<void> {
 
 import { useClothing } from '../store/clothing';
 import type { ClothingImage } from '../types';
+import { TEMPLATES } from '../clothing/templates';
 
 /** Adds an uploaded picture to the clothing image library, and optionally places it as a layer. */
 export async function uploadClothingImage(file: File, asLayer = true): Promise<ClothingImage | null> {
@@ -187,5 +204,27 @@ export async function uploadClothingImage(file: File, asLayer = true): Promise<C
     return null;
   } finally {
     useUI.getState().setBusy(null);
+  }
+}
+
+/**
+ * Imports an existing shirt/pants/T-shirt PNG as the bottom layer of the active design.
+ * A file that already matches the Roblox template size is placed 1:1; anything else is scaled to fit.
+ */
+export async function importClothingTemplate(file: File): Promise<boolean> {
+  const ui = useUI.getState();
+  try {
+    const img = await uploadClothingImage(file, false);
+    if (!img) return false;
+    const cl = useClothing.getState();
+    const spec = TEMPLATES[cl.activeKind];
+    const exact = cl.activeKind === 'tshirt' ? img.width === img.height : img.width === spec.width && img.height === spec.height;
+    cl.addBaseImage(img, exact && cl.activeKind !== 'tshirt' ? 'exact' : 'contain');
+    if (exact) ui.toast('success', `Imported "${img.name}" at ${img.width}×${img.height}. It matches the ${spec.label.toLowerCase()} template, so every panel lines up.`);
+    else ui.toast('warn', `"${img.name}" is ${img.width}×${img.height}, not ${spec.width}×${spec.height}. It was scaled to fit, so panels may not line up. Check the guides.`);
+    return true;
+  } catch (err) {
+    ui.toast('error', err instanceof Error ? err.message : 'Import failed.');
+    return false;
   }
 }

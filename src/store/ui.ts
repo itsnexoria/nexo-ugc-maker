@@ -53,7 +53,10 @@ interface UIState {
   toasts: Toast[];
   logs: LogEntry[];
   busy: string | null;
+  tour: 'accessory' | 'clothing' | null;
 
+  startTour: (mode: 'accessory' | 'clothing') => void;
+  endTour: () => void;
   setBottomTab: (t: BottomTab) => void;
   toggleBottom: () => void;
   setBottomHeight: (h: number) => void;
@@ -90,7 +93,10 @@ export const useUI = create<UIState>((set, get) => ({
   toasts: [],
   logs: [{ id: 0, time: Date.now(), level: 'info', message: 'Nexo UGC Studio ready.' }],
   busy: null,
+  tour: null,
 
+  startTour: (tour) => set({ tour, contextMenu: null, modal: null }),
+  endTour: () => set({ tour: null }),
   setBottomTab: (t) => set({ bottomTab: t, bottomOpen: true }),
   toggleBottom: () => set((s) => ({ bottomOpen: !s.bottomOpen })),
   setBottomHeight: (h) => set({ bottomHeight: Math.min(460, Math.max(140, h)) }),

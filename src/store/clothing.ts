@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { ClothingData, ClothingImage, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, ShapeLayer, Stroke, TextLayer } from '../types';
 import { makeLayer, type NewLayerType } from '../clothing/layers';
-import { TEMPLATES, mirrorGroupId, mirrorPanelId, panelById } from '../clothing/templates';
+import { TEMPLATES, mirrorGroupId, mirrorPanelId, panelAt, panelById } from '../clothing/templates';
 import { useEditor } from './editor';
 import { useUI } from './ui';
 
@@ -10,6 +10,23 @@ const MERGE_WINDOW_MS = 900;
 
 export type ClothingTool = 'select' | 'place' | 'brush' | 'eraser';
 export type ViewMode = 'split' | '2d' | '3d';
+
+export interface BrushState {
+  color: string;
+  size: number;
+  hardness: number;
+  opacity: number;
+  symmetry: boolean;
+}
+
+/** Where a point lands on the opposite side of the body (left/right mirror), or null off-template. */
+export function mirrorPoint(kind: ClothingKind, pt: [number, number]): [number, number] | null {
+  const src = panelAt(kind, pt[0], pt[1]);
+  if (!src) return null;
+  const dst = panelById(kind, mirrorPanelId(src.id));
+  if (!dst) return null;
+  return [dst.x + dst.w / 2 - (pt[0] - (src.x + src.w / 2)), dst.y + (pt[1] - src.y)];
+}
 
 type Designs = Record<ClothingKind, ClothingLayer[]>;
 
@@ -21,7 +38,8 @@ export interface ClothingState {
   activeKind: ClothingKind;
   selectedId: string | null;
   tool: ClothingTool;
-  brush: { color: string; size: number };
+  brush: BrushState;
+  recentColors: string[];
   showGuides: boolean;
   viewMode: ViewMode;
   /** which clothing kinds are drawn on the 3D mannequin */
@@ -42,11 +60,12 @@ export interface ClothingState {
   setActiveKind: (k: ClothingKind) => void;
   select: (id: string | null) => void;
   setTool: (t: ClothingTool) => void;
-  setBrush: (patch: Partial<{ color: string; size: number }>) => void;
+  setBrush: (patch: Partial<BrushState>) => void;
   setShowGuides: (v: boolean) => void;
   setViewMode: (v: ViewMode) => void;
   setShown: (k: ClothingKind, v: boolean) => void;
 
+  addBaseImage: (img: ClothingImage, fit?: 'exact' | 'contain') => string;
   addLayer: (type: NewLayerType, opts?: { clip?: string; image?: ClothingImage }) => string;
   insertLayers: (layers: ClothingLayer[], replace?: boolean) => void;
   updateLayer: (id: string, patch: Partial<ClothingLayer>, key?: string) => void;
@@ -57,8 +76,8 @@ export interface ClothingState {
   reorderLayer: (id: string, toIndex: number) => void;
   clearDesign: () => void;
 
-  beginStroke: (stroke: Stroke) => { layerId: string; index: number };
-  extendStroke: (layerId: string, index: number, point: [number, number]) => void;
+  beginStroke: (stroke: Stroke) => { layerId: string; index: number; mirrorIndex: number | null };
+  extendStroke: (layerId: string, index: number, point: [number, number], mirrorIndex?: number | null) => void;
 
   addImage: (img: ClothingImage) => void;
   removeImage: (id: string) => void;
@@ -96,7 +115,8 @@ export const useClothing = create<ClothingState>((set, get) => {
     activeKind: 'shirt',
     selectedId: null,
     tool: 'select',
-    brush: { color: '#e3242b', size: 6 },
+    brush: { color: '#e3242b', size: 6, hardness: 1, opacity: 1, symmetry: false },
+    recentColors: [],
     showGuides: true,
     viewMode: 'split',
     shown: { shirt: true, pants: true, tshirt: true },
@@ -135,6 +155,36 @@ export const useClothing = create<ClothingState>((set, get) => {
     setShowGuides: (showGuides) => set({ showGuides }),
     setViewMode: (viewMode) => set({ viewMode }),
     setShown: (k, v) => set((s) => ({ shown: { ...s.shown, [k]: v } })),
+
+    addBaseImage: (img, fit = 'contain') => {
+      const s = get();
+      const kind = s.activeKind;
+      const spec = TEMPLATES[kind];
+      const k = fit === 'exact' ? 1 : Math.min(spec.width / img.width, spec.height / img.height);
+      const w = fit === 'exact' ? spec.width : img.width * k;
+      const h = fit === 'exact' ? spec.height : img.height * k;
+      const layer: ImageLayer = {
+        id: `lyr_base${Date.now().toString(36)}`,
+        name: `Imported ${spec.label.toLowerCase()}`,
+        visible: true,
+        locked: false,
+        opacity: 1,
+        blend: 'normal',
+        clip: 'all',
+        type: 'image',
+        imageId: img.id,
+        x: spec.width / 2,
+        y: spec.height / 2,
+        w,
+        h,
+        rotation: 0,
+        flipX: false,
+      };
+      // goes to the bottom of the stack so everything you add sits on top of it
+      commit(`Imported ${spec.label.toLowerCase()} image`, withLayers(kind, [layer, ...s.designs[kind]]), undefined, [kind]);
+      set({ selectedId: layer.id });
+      return layer.id;
+    },
 
     addLayer: (type, opts) => {
       const s = get();
@@ -255,32 +305,50 @@ export const useClothing = create<ClothingState>((set, get) => {
       const s = get();
       const kind = s.activeKind;
       const layers = s.designs[kind];
+      const full: Stroke = { ...stroke, hardness: stroke.hardness ?? s.brush.hardness, alpha: stroke.alpha ?? s.brush.opacity };
       let target = layers.find((l) => l.id === s.selectedId && l.type === 'paint' && !l.locked) as PaintLayer | undefined;
       let next = layers;
       if (!target) {
         target = makeLayer(kind, 'paint') as PaintLayer;
         next = [...layers, target];
       }
-      const updated: PaintLayer = { ...target, strokes: [...target.strokes, stroke] };
+      const strokes = [...target.strokes, full];
+      const index = strokes.length - 1;
+      let mirrorIndex: number | null = null;
+      if (s.brush.symmetry) {
+        const mp = mirrorPoint(kind, full.points[0]);
+        if (mp) {
+          strokes.push({ ...full, points: [mp] });
+          mirrorIndex = strokes.length - 1;
+        }
+      }
+      const updated: PaintLayer = { ...target, strokes };
       next = next.map((l) => (l.id === updated.id ? updated : l));
       if (!next.some((l) => l.id === updated.id)) next = [...next, updated];
       commit(stroke.erase ? 'Erased' : 'Painted', withLayers(kind, next), undefined, [kind]);
-      set({ selectedId: updated.id });
-      return { layerId: updated.id, index: updated.strokes.length - 1 };
+      const colors = [stroke.color, ...get().recentColors.filter((c) => c !== stroke.color)].slice(0, 8);
+      set({ selectedId: updated.id, recentColors: stroke.erase ? get().recentColors : colors });
+      return { layerId: updated.id, index, mirrorIndex };
     },
 
-    extendStroke: (layerId, index, point) => {
+    extendStroke: (layerId, index, point, mirrorIndex = null) => {
       const kind = findKind(layerId);
       if (!kind) return;
       const s = get();
+      const add = (st: Stroke, pt: [number, number]): Stroke => {
+        const last = st.points[st.points.length - 1];
+        if (last && Math.hypot(last[0] - pt[0], last[1] - pt[1]) < 0.4) return st;
+        return { ...st, points: [...st.points, pt] };
+      };
       const layers = s.designs[kind].map((l) => {
         if (l.id !== layerId || l.type !== 'paint') return l;
         const strokes = l.strokes.slice();
-        const st = strokes[index];
-        if (!st) return l;
-        const last = st.points[st.points.length - 1];
-        if (last && Math.hypot(last[0] - point[0], last[1] - point[1]) < 0.4) return l;
-        strokes[index] = { ...st, points: [...st.points, point] };
+        if (!strokes[index]) return l;
+        strokes[index] = add(strokes[index], point);
+        if (mirrorIndex !== null && strokes[mirrorIndex]) {
+          const mp = mirrorPoint(kind, point);
+          if (mp) strokes[mirrorIndex] = add(strokes[mirrorIndex], mp);
+        }
         return { ...l, strokes };
       });
       commit('Painted', withLayers(kind, layers), `stroke:${layerId}:${index}`, [kind]);

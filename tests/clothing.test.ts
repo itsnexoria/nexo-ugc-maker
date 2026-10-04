@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { TEMPLATES, clipBounds, clipRects, mirrorPanelId, panelAt, panelById } from '../src/clothing/templates';
-import { bodyMapFor, buildClothingGeometry, faceUvPixels } from '../src/clothing/mapping';
+import { bodyMapFor, buildClothingGeometry, faceUvPixels, r15JointOffsets } from '../src/clothing/mapping';
 import { layerBox, pointInBox } from '../src/clothing/render';
 import { checkLayers } from '../src/clothing/validation';
 import { CLOTHING_PRESETS } from '../src/clothing/presets';
@@ -99,6 +99,19 @@ describe('3D UV mapping', () => {
       expect(uv.getY(i)).toBeGreaterThanOrEqual(0);
       expect(uv.getY(i)).toBeLessThanOrEqual(1);
     }
+  });
+
+  it('uses the documented 64/48/16 px limb split on R15', () => {
+    const up = bodyMapFor('R15', 'RightUpperArm')!;
+    const lo = bodyMapFor('R15', 'RightLowerArm')!;
+    const hand = bodyMapFor('R15', 'RightHand')!;
+    expect((up.slice[1] - up.slice[0]) * 128).toBeCloseTo(64, 5);
+    expect((lo.slice[1] - lo.slice[0]) * 128).toBeCloseTo(48, 5);
+    expect((hand.slice[1] - hand.slice[0]) * 128).toBeCloseTo(16, 5);
+    expect(up.top && !up.bottom).toBe(true);
+    expect(hand.bottom && !hand.top).toBe(true);
+    expect(lo.top || lo.bottom).toBe(false);
+    expect(r15JointOffsets('rightLeg')).toEqual([112, 64]); // px from the panel top: hand/lower, lower/upper
   });
 
   it('splits R15 limbs into slices that add up to the whole panel', () => {

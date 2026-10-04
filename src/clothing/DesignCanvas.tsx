@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { selectedLayer, useClothing } from '../store/clothing';
 import type { ClothingLayer, ImageLayer, ShapeLayer, TextLayer } from '../types';
-import { ensureComposite, canvasFor } from './composite';
+import { ensureComposite, canvasFor, getComposite } from './composite';
 import { layerBox, pointInBox, type LayerBox } from './render';
 import { TEMPLATES } from './templates';
+import { r15JointOffsets } from './mapping';
+import { useEditor } from '../store/editor';
 
 interface View {
   zoom: number;
@@ -16,7 +18,7 @@ type Drag =
   | { mode: 'move'; id: string; sx: number; sy: number; ox: number; oy: number }
   | { mode: 'scale'; id: string; cx: number; cy: number; d0: number; w: number; h: number; size: number }
   | { mode: 'rotate'; id: string; cx: number; cy: number; offset: number }
-  | { mode: 'paint'; layerId: string; index: number };
+  | { mode: 'paint'; layerId: string; index: number; mirrorIndex: number | null };
 
 const HANDLE = 5;
 
@@ -40,6 +42,7 @@ export function DesignCanvas() {
   const tool = useClothing((s) => s.tool);
   const showGuides = useClothing((s) => s.showGuides);
   const spec = TEMPLATES[kind];
+  const rig = useEditor((s) => s.rig);
 
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -149,10 +152,35 @@ export function DesignCanvas() {
         ctx.strokeRect(p.x + 0.5 / view.zoom, p.y + 0.5 / view.zoom, p.w - 1 / view.zoom, p.h - 1 / view.zoom);
         if (spec.kind !== 'tshirt' && view.zoom > 0.55) {
           const short = p.label.replace('Right sleeve', 'R sleeve').replace('Left sleeve', 'L sleeve').replace('Right leg', 'R leg').replace('Left leg', 'L leg');
-          ctx.fillText(short.split(' ').slice(-1)[0] === 'side' ? short.replace(' side', '') : short, p.x + p.w / 2, p.y + 3 / view.zoom, p.w - 4);
+          const text = short.split(' ').slice(-1)[0] === 'side' ? short.replace(' side', '') : short;
+          // dark outline keeps labels readable on light designs
+          ctx.lineWidth = 2.5 / view.zoom;
+          ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+          ctx.lineJoin = 'round';
+          ctx.strokeText(text, p.x + p.w / 2, p.y + 3 / view.zoom, p.w - 4);
+          ctx.fillText(text, p.x + p.w / 2, p.y + 3 / view.zoom, p.w - 4);
+          ctx.lineWidth = 1 / view.zoom;
+          ctx.strokeStyle = 'rgba(255,255,255,0.55)';
         }
       }
       ctx.setLineDash([]);
+      if (rig === 'R15' && spec.kind !== 'tshirt') {
+        // where R15 segments meet: clothing blends across these lines on R15 avatars
+        ctx.strokeStyle = 'rgba(190,120,255,0.9)';
+        ctx.lineWidth = 1.2 / view.zoom;
+        ctx.setLineDash([2 / view.zoom, 2 / view.zoom]);
+        for (const p of spec.panels) {
+          if (p.face === 'top' || p.face === 'bottom') continue;
+          for (const off of r15JointOffsets(p.part === 'torso' ? 'torso' : 'rightArm')) {
+            const y = p.y + p.h - (128 - off);
+            ctx.beginPath();
+            ctx.moveTo(p.x, y);
+            ctx.lineTo(p.x + p.w, y);
+            ctx.stroke();
+          }
+        }
+        ctx.setLineDash([]);
+      }
     }
     ctx.lineWidth = 1 / view.zoom;
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
@@ -192,7 +220,7 @@ export function DesignCanvas() {
       ctx.stroke();
     }
     ctx.restore();
-  }, [size, view, kind, revision, imageRev, dv, selectedId, tool, showGuides, spec, bump]);
+  }, [size, view, kind, revision, imageRev, dv, selectedId, tool, showGuides, spec, bump, rig]);
 
   // ---------------------------------------------------------------- interaction
   const hitHandle = (layer: ClothingLayer, x: number, y: number): 'rotate' | 'scale' | null => {
@@ -220,8 +248,15 @@ export function DesignCanvas() {
     el.setPointerCapture(e.pointerId);
 
     if (tool === 'brush' || tool === 'eraser') {
+      if (e.altKey && tool === 'brush') {
+        // eyedropper: Alt+click picks the colour under the pointer
+        const src = getComposite(kind);
+        const px = src.getContext('2d', { willReadFrequently: true })?.getImageData(Math.floor(x * spec.scale), Math.floor(y * spec.scale), 1, 1).data;
+        if (px && px[3] > 0) s.setBrush({ color: `#${[px[0], px[1], px[2]].map((v) => v.toString(16).padStart(2, '0')).join('')}` });
+        return;
+      }
       const r = s.beginStroke({ color: s.brush.color, size: s.brush.size, erase: tool === 'eraser', points: [[x, y]] });
-      drag.current = { mode: 'paint', layerId: r.layerId, index: r.index };
+      drag.current = { mode: 'paint', layerId: r.layerId, index: r.index, mirrorIndex: r.mirrorIndex };
       return;
     }
 
@@ -279,7 +314,7 @@ export function DesignCanvas() {
       if (e.shiftKey) deg = Math.round(deg / 15) * 15;
       s.updateLayer(d.id, { rotation: Math.round(deg * 10) / 10 } as Partial<ClothingLayer>, `${d.id}:rot`);
     } else if (d.mode === 'paint') {
-      s.extendStroke(d.layerId, d.index, [x, y]);
+      s.extendStroke(d.layerId, d.index, [x, y], d.mirrorIndex);
     }
   };
 

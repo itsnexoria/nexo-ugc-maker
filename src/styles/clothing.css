@@ -152,3 +152,33 @@
 .app.clothing .right {
   min-width: 0;
 }
+
+.lrow[draggable='true'] {
+  cursor: grab;
+}
+.lrow.dragging {
+  opacity: 0.4;
+}
+.lrow.drop-above {
+  box-shadow: inset 0 2px 0 var(--accent);
+}
+.lrow.drop-below {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-left: 80px;
+}
+.swatch {
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0;
+}
+.swatch:hover {
+  border-color: var(--text);
+}

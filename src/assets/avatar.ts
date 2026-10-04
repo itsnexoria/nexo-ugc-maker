@@ -114,3 +114,26 @@ export const AVATAR_TONES: Record<BoneTone, string> = {
   limb: '#8d919c',
   extremity: '#d9dbe1',
 };
+
+/**
+ * Attachment names Roblox accessories use to snap onto a character. These are suggestions
+ * for the exported file: the attachment itself is set up in Roblox Studio.
+ */
+export function robloxAttachmentFor(slot: SlotId, rootX = 0): string {
+  switch (slot) {
+    case 'hat':
+      return 'HatAttachment';
+    case 'hair':
+      return 'HairAttachment';
+    case 'face':
+      return 'FaceFrontAttachment';
+    case 'back':
+      return 'BodyBackAttachment';
+    case 'shoulder':
+      return rootX < 0 ? 'LeftShoulderAttachment' : 'RightShoulderAttachment';
+    case 'waist':
+      return 'WaistFrontAttachment';
+    default:
+      return 'BodyFrontAttachment';
+  }
+}

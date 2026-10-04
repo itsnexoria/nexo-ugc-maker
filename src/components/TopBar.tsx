@@ -9,6 +9,7 @@ import { useViewport } from '../store/viewport';
 import { duplicateCurrent, goHome, saveNow } from '../store/session';
 import * as projects from '../store/projects';
 import { downloadBlob, safeFilename, timeAgo } from '../utils/download';
+import { copyDiagnostics } from '../utils/diagnostics';
 import { BrandMark, Wordmark } from './Brand';
 import { Tip } from './ui/Tooltip';
 
@@ -139,7 +140,13 @@ export function TopBar({ mode = 'accessory' }: { mode?: 'accessory' | 'clothing'
     openMenu(Math.max(8, r.right - 210), r.bottom + 4, [
       { label: `Signed in locally as ${name}`, disabled: true, icon: ic(User) },
       { separator: true },
+      { label: 'Take the tour', icon: ic(HelpCircle), onClick: () => useUI.getState().startTour(clothing ? 'clothing' : 'accessory') },
       { label: 'Keyboard shortcuts', icon: ic(Keyboard), shortcut: '?', onClick: () => openModal('shortcuts') },
+      {
+        label: 'Copy diagnostics (for bug reports)',
+        icon: ic(Copy),
+        onClick: async () => useUI.getState().toast((await copyDiagnostics()) ? 'success' : 'warn', 'Diagnostics copied. Paste them into your bug report. Nothing is sent automatically.'),
+      },
       { label: 'Settings', icon: ic(Settings), onClick: () => openModal('settings') },
       { label: 'About Nexo UGC Studio', icon: ic(Info), onClick: () => openModal('about') },
     ]);

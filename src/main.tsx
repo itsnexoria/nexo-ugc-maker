@@ -12,6 +12,7 @@ import './styles/overlays.css';
 import './styles/layout.css';
 import './styles/clothing.css';
 import App from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { applyTheme, useSettings } from './store/settings';
 
 applyTheme(useSettings.getState().theme);
@@ -25,6 +26,8 @@ if (new URLSearchParams(location.search).has('debug')) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

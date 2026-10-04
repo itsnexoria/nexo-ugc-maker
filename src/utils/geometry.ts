@@ -9,36 +9,36 @@ import type { ModelAsset, ShapeKind } from '../types';
 const cache = new Map<string, THREE.BufferGeometry>();
 const modelCache = new Map<string, THREE.BufferGeometry>();
 
-function build(kind: ShapeKind): THREE.BufferGeometry {
+function build(kind: ShapeKind, low = false): THREE.BufferGeometry {
   switch (kind) {
     case 'cube':
       return new THREE.BoxGeometry(1, 1, 1);
     case 'sphere':
-      return new THREE.SphereGeometry(0.5, 16, 10);
+      return low ? new THREE.SphereGeometry(0.5, 10, 6) : new THREE.SphereGeometry(0.5, 16, 10);
     case 'cylinder':
-      return new THREE.CylinderGeometry(0.5, 0.5, 1, 20);
+      return low ? new THREE.CylinderGeometry(0.5, 0.5, 1, 10) : new THREE.CylinderGeometry(0.5, 0.5, 1, 20);
     case 'cone':
-      return new THREE.ConeGeometry(0.5, 1, 20);
+      return low ? new THREE.ConeGeometry(0.5, 1, 10) : new THREE.ConeGeometry(0.5, 1, 20);
     case 'torus': {
       // Flat ring in the XZ plane, bounding box 1 x 0.3 x 1
-      const g = new THREE.TorusGeometry(0.35, 0.15, 8, 20);
+      const g = low ? new THREE.TorusGeometry(0.35, 0.15, 6, 12) : new THREE.TorusGeometry(0.35, 0.15, 8, 20);
       g.rotateX(Math.PI / 2);
       return g;
     }
     case 'capsule':
-      return new THREE.CapsuleGeometry(0.3, 0.4, 3, 10);
+      return low ? new THREE.CapsuleGeometry(0.3, 0.4, 2, 6) : new THREE.CapsuleGeometry(0.3, 0.4, 3, 10);
     case 'pyramid': {
       const g = new THREE.ConeGeometry(0.5, 1, 4, 1);
       g.rotateY(Math.PI / 4);
       return g;
     }
     case 'icosphere':
-      return new THREE.IcosahedronGeometry(0.5, 1);
+      return new THREE.IcosahedronGeometry(0.5, low ? 0 : 1);
     case 'torusknot':
-      return new THREE.TorusKnotGeometry(0.3, 0.09, 40, 5);
+      return low ? new THREE.TorusKnotGeometry(0.3, 0.09, 24, 3) : new THREE.TorusKnotGeometry(0.3, 0.09, 40, 5);
     case 'arch':
       // Half ring standing up in the XY plane (headbands, handles, horns)
-      return new THREE.TorusGeometry(0.35, 0.15, 8, 16, Math.PI);
+      return low ? new THREE.TorusGeometry(0.35, 0.15, 5, 8, Math.PI) : new THREE.TorusGeometry(0.35, 0.15, 8, 16, Math.PI);
     case 'wedge': {
       const shape = new THREE.Shape();
       shape.moveTo(-0.5, -0.5);
@@ -54,12 +54,19 @@ function build(kind: ShapeKind): THREE.BufferGeometry {
   }
 }
 
-export function getPrimitiveGeometry(kind: ShapeKind): THREE.BufferGeometry {
-  let g = cache.get(kind);
+export type Detail = 'low' | 'normal';
+
+/** Shapes that have a cheaper 'low' version. Cubes and wedges are already minimal. */
+export const LOW_POLY_KINDS: ShapeKind[] = ['sphere', 'cylinder', 'cone', 'torus', 'capsule', 'icosphere', 'torusknot', 'arch'];
+
+export function getPrimitiveGeometry(kind: ShapeKind, detail: Detail = 'normal'): THREE.BufferGeometry {
+  const low = detail === 'low' && LOW_POLY_KINDS.includes(kind);
+  const key = low ? `${kind}:low` : kind;
+  let g = cache.get(key);
   if (!g) {
-    g = build(kind);
+    g = build(kind, low);
     g.computeBoundingBox();
-    cache.set(kind, g);
+    cache.set(key, g);
   }
   return g;
 }

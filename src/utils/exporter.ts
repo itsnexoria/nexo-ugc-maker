@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import JSZip from 'jszip';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
-import { BONES } from '../assets/avatar';
+import { BONES, robloxAttachmentFor } from '../assets/avatar';
+import { bakeMerged, type AtlasSize } from './bake';
 import type { Layer, MaterialProps, ModelAsset, RigType, SceneObject, TextureAsset } from '../types';
 import { getModelGeometry, getPrimitiveGeometry, triangleCount } from './geometry';
 import { DEG, localMatrix, worldMatrix } from './math';
@@ -18,6 +19,11 @@ export interface ExportOptions {
   includeAvatar: boolean;
   includeHidden: boolean;
   filename: string;
+  /** Join all parts into one mesh with one baked texture atlas (what Roblox accessories need) */
+  merge?: boolean;
+  atlasSize?: AtlasSize;
+  /** With merge: move the origin to the accessory's attachment point */
+  centerOnAttachment?: boolean;
 }
 
 export interface ExportInput {
@@ -35,6 +41,70 @@ export interface ExportResult {
   parts: number;
   triangles: number;
   files: string[];
+  /** Suggested Roblox attachment name for merged exports */
+  attachment?: string;
+}
+
+/** The accessory group the attachment point comes from: the first slotted root. */
+export function primaryRoot(input: Pick<ExportInput, 'objects' | 'order'>): SceneObject | undefined {
+  return input.order.map((id) => input.objects[id]).find((o) => o && !o.parentId && o.slot);
+}
+
+async function mergedParts(input: ExportInput, opts: ExportOptions) {
+  const root = primaryRoot(input);
+  const origin = opts.centerOnAttachment !== false && root ? new THREE.Vector3(...root.position) : null;
+  const baked = await bakeMerged(input, opts.atlasSize ?? 1024, origin, opts.includeHidden);
+  const attachment = root?.slot ? robloxAttachmentFor(root.slot, root.position[0]) : 'BodyFrontAttachment';
+  return { baked, attachment };
+}
+
+async function exportMergedObj(input: ExportInput, opts: ExportOptions): Promise<ExportResult> {
+  const { baked, attachment } = await mergedParts(input, opts);
+  const base = safe(opts.filename);
+  const unit = new THREE.Matrix4().makeScale(UNIT_SCALE[opts.units], UNIT_SCALE[opts.units], UNIT_SCALE[opts.units]);
+  const zip = new JSZip();
+  const matName = `${base}_atlas`;
+  zip.file(`${base}.obj`, writeObj([{ name: base, geometry: baked.geometry, matrix: unit, materialName: matName }], `${base}.mtl`));
+  const files = [`${base}.obj`, `${base}.mtl`];
+  let texFile: string | null = null;
+  if (baked.atlas) {
+    const blob: Blob = await new Promise((res, rej) => baked.atlas!.toBlob((b) => (b ? res(b) : rej(new Error('Could not write the texture atlas.'))), 'image/png'));
+    texFile = `textures/${base}_atlas.png`;
+    zip.file(texFile, blob);
+    files.push(texFile);
+  }
+  zip.file(`${base}.mtl`, `# One material, one baked texture atlas\n${mtlFor(matName, { color: '#ffffff', metalness: 0, roughness: 1, opacity: 1, emissive: '#000000', emissiveIntensity: 0, textureId: null, texRepeat: [1, 1], texOffset: [0, 0], texRotation: 0 }, texFile)}\n`);
+  zip.file('README.txt', `Exported from Nexo UGC Studio by Nexoria.\nOne joined mesh, one ${opts.atlasSize ?? 1024}px texture atlas.\nSuggested Roblox attachment: ${attachment}\nOrigin is ${opts.centerOnAttachment !== false ? 'the attachment point' : 'the scene origin'}.\n`);
+  return { blob: await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }), filename: `${base}-obj.zip`, parts: baked.parts, triangles: baked.triangles, files, attachment };
+}
+
+async function exportMergedGltf(input: ExportInput, opts: ExportOptions): Promise<ExportResult> {
+  const { baked, attachment } = await mergedParts(input, opts);
+  const base = safe(opts.filename);
+  const root = new THREE.Group();
+  root.name = base;
+  root.scale.setScalar(UNIT_SCALE[opts.units]);
+  const mat = new THREE.MeshStandardMaterial({ name: `${base}_atlas`, color: '#ffffff', roughness: 1, metalness: 0, transparent: baked.hasAlpha });
+  if (baked.atlas) {
+    const tex = new THREE.CanvasTexture(baked.atlas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.flipY = false;
+    mat.map = tex;
+  }
+  const mesh = new THREE.Mesh(baked.geometry, mat);
+  mesh.name = `${base}_Mesh`;
+  root.add(mesh);
+  const att = new THREE.Object3D();
+  att.name = attachment;
+  att.userData = { robloxAttachment: attachment, note: 'Suggested attachment point. Create the Attachment in Roblox Studio.' };
+  root.add(att);
+  root.updateMatrixWorld(true);
+  const binary = opts.format === 'glb';
+  const result = await new Promise<ArrayBuffer | object>((resolve, reject) => {
+    new GLTFExporter().parse(root, resolve, (e) => reject(e instanceof Error ? e : new Error('glTF export failed')), { binary, onlyVisible: false, maxTextureSize: 4096 });
+  });
+  const blob = binary ? new Blob([result as ArrayBuffer], { type: 'model/gltf-binary' }) : new Blob([JSON.stringify(result)], { type: 'model/gltf+json' });
+  return { blob, filename: `${base}.${binary ? 'glb' : 'gltf'}`, parts: baked.parts, triangles: baked.triangles, files: [`${base}.${binary ? 'glb' : 'gltf'}`], attachment };
 }
 
 const safe = (s: string) => s.replace(/[^\w\-.]+/g, '_').replace(/^_+|_+$/g, '') || 'part';
@@ -57,7 +127,7 @@ function geometryOf(o: SceneObject, input: ExportInput): THREE.BufferGeometry | 
     const m = o.modelId ? input.models[o.modelId] : undefined;
     return m ? getModelGeometry(m) : null;
   }
-  return getPrimitiveGeometry(o.kind);
+  return getPrimitiveGeometry(o.kind, o.detail);
 }
 
 // ------------------------------------------------------------------ OBJ
@@ -334,5 +404,6 @@ async function exportGltf(input: ExportInput, opts: ExportOptions): Promise<Expo
 }
 
 export async function runExport(input: ExportInput, opts: ExportOptions): Promise<ExportResult> {
+  if (opts.merge) return opts.format === 'obj' ? exportMergedObj(input, opts) : exportMergedGltf(input, opts);
   return opts.format === 'obj' ? exportObj(input, opts) : exportGltf(input, opts);
 }

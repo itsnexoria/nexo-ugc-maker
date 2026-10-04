@@ -44,6 +44,8 @@ export interface SceneObject {
   modelId?: string;
   /** Root accessory groups: where on the avatar this attaches */
   slot?: SlotId;
+  /** Mesh resolution of primitives. 'low' uses far fewer triangles. */
+  detail?: 'low' | 'normal';
 }
 
 export interface Layer {
@@ -232,6 +234,10 @@ export interface Stroke {
   size: number;
   erase: boolean;
   points: [number, number][];
+  /** 0 = very soft edge, 1 = hard edge (default 1) */
+  hardness?: number;
+  /** stroke opacity 0..1 (default 1), applied to the whole stroke so overlaps do not build up */
+  alpha?: number;
 }
 
 export interface PaintLayer extends ClothingLayerBase {

@@ -36,12 +36,30 @@ Create a project with **New Project → Clothing**. One project holds a Shirt, P
 - **Layers**: color fill (with gradient), patterns (stripes, checker, dots, grid, zigzag, camo), text (fonts, outline), shapes, uploaded images, and paint layers. Opacity, blend modes, lock/hide, reorder, duplicate, rename.
 - **Applies to**: limit any layer to the whole template, one body part (torso, a sleeve, a leg) or a single panel, so artwork does not spill onto other sides. Bands can wrap around the torso or a sleeve.
 - **Direct 3D**: the *Brush* tool paints on the template or straight onto the mannequin; *Place on model* drops the selected layer wherever you click. Strokes that cross onto another panel start a new stroke, so nothing draws across the template.
+- **Brush controls**: size, hardness (soft edges), opacity (applied per stroke, so overlaps do not build up), **symmetry painting** (left and right sides together), recent colors, and an Alt+click eyedropper. Every stroke is one undo step.
+- **Import an existing shirt/pants/T-shirt PNG** and keep editing it. A file that is exactly 585 × 559 lines up 1:1 with the template and goes to the bottom of the stack; other sizes are scaled to fit with a warning. Dropping a matching PNG on the editor does the same.
+- **Reorder layers by dragging** in the Layers list (one undo step per move).
 - **Mirror** copies a layer to the opposite sleeve/leg, flipped, in the right place.
 - **Preview**: R6 and R15, rest/idle/walk/run/jump, shirt/pants/T-shirt shown or hidden independently.
 - **Presets**: cyber jacket, hoodie, racing tee, camo, jeans, track pants, cargo, N badge, slogan and more. Presets are ordinary layers.
 - **Export**: PNG per item or a ZIP of all. Shirts and pants are exactly 585 × 559; T-shirts export at 128, 256 or 512 px (drawn at 4× and downscaled).
 
-Limits to be aware of: this is **classic** clothing only (flat template images). Layered clothing needs a cage and rig in a 3D tool and is not supported. The R15 preview is an approximation, because Roblox does its own R15 composition, so always test on an avatar before uploading. Template positions come from Roblox's Creator Docs (sizes) and DevForum UV tables (positions).
+**R15 mapping**: limb panels are split 64 px upper / 48 px lower / 16 px hand or foot, following Roblox's R15 guidance on the DevForum. Purple dashed lines on the template show where R15 segments meet. The torso split (20% lower torso) is an approximation because Roblox does not publish that line, so always test on a real avatar before uploading.
+
+Limits to be aware of: this is **classic** clothing only (flat template images). Layered clothing needs a cage and rig in a 3D tool and is not supported. Template positions come from Roblox's Creator Docs (sizes) and DevForum UV tables (positions).
+
+## Accessory export (Roblox-ready)
+
+- **Join into one mesh with one baked texture** (on by default): every visible part is merged into a single mesh and its color, glow and textures are baked into one 512 or 1024 px atlas. Roblox accessories need exactly this. Metalness, roughness and soft transparency are not carried over.
+- **Origin at the attachment point**, plus a suggested Roblox attachment name (for example `HatAttachment`, `FaceFrontAttachment`, `BodyBackAttachment`) written into the GLB as an empty node and shown in the dialog. Creating the Attachment itself still happens in Roblox Studio.
+- **Reduce triangles automatically** (Validation tab): switches the heaviest primitives to low-poly until the scene fits under 85% of the 4,000-triangle limit. One undo step. Parts also have a per-part Detail setting.
+
+## Housekeeping
+
+- **Guided tour** on first open of each editor (also in the profile menu: *Take the tour*).
+- **Crash screen**: a rendering error shows a recovery page with *Reload*, *Download project backup* and *Copy diagnostics* instead of a blank page.
+- **No analytics.** Problems reach you through *Copy diagnostics* (browser, GPU, mode, counts and recent log lines, no artwork or project names). Unhandled errors also appear in the Console tab.
+- Version is shown in diagnostics (`package.json` version).
 
 ## What is real, and what is not
 
@@ -78,8 +96,8 @@ Conventions: Y up, 1 unit = 1 stud, the avatar and accessory front face **−Z**
 8. **Undo / redo & gizmos** — snapshot history with edit merging, transform controls that commit once per drag
 9. **Avatar preview** — R6 / R15 rigs, procedural animations, accessories following bones
 10. **Validation & export** — Roblox-oriented checks, GLB / glTF / OBJ writers, Roblox workflow notes
-11. **QA** — 41 unit tests, headless-browser run through create → edit → undo → save → reload → export, 1366×768 layout pass
-12. **Clothing studio** — template + UV mapping verified with labelled panels from four sides, layer renderer, 2D editor (move/scale/rotate/paint), 3D painting and place-on-model, presets, PNG export
+11. **QA** — 57 unit tests, headless-browser run through create → edit → undo → save → reload → export, 1366×768 layout pass
+12. **Clothing studio** (v1.1) — template + UV mapping verified with labelled panels from four sides, layer renderer, 2D editor (move/scale/rotate/paint), 3D painting and place-on-model, presets, PNG export
 
 ## Layout
 
@@ -100,3 +118,4 @@ tests/         vitest
 Accessories: Ctrl+Z undo · Ctrl+Y redo · Ctrl+S save · Delete delete · Ctrl+D duplicate · F focus · V/W/E/R tools · G grid · X snap · L lighting · Z wireframe · 1–5 camera views · P preview · ? all shortcuts
 
 Clothing studio: Ctrl+Z/Y undo/redo · Ctrl+S save · Ctrl+D duplicate · Delete remove layer · V select · P place on model · B brush · E eraser · T text · Space+drag pan · scroll zoom
+13. **v1.2 polish** — clothing import, soft/symmetric brush, drag-reorder layers, documented R15 mapping, one-mesh + baked-atlas accessory export, attachment hints, triangle optimizer, guided tour, crash recovery, diagnostics

@@ -20,11 +20,12 @@ import {
   Type,
   Upload,
   Grid2x2,
+  FileUp,
 } from 'lucide-react';
 import { ColorField, NumberField, SliderField } from '../components/ui/Fields';
 import { Section } from '../components/ui/Section';
 import { Tip } from '../components/ui/Tooltip';
-import { pickFiles, uploadClothingImage } from '../editor/importers';
+import { importClothingTemplate, pickFiles, uploadClothingImage } from '../editor/importers';
 import { selectedLayer, useClothing, type ClothingTool } from '../store/clothing';
 import { useUI } from '../store/ui';
 import type { BlendMode, ClothingKind, ClothingLayer, PatternId, ShapeType } from '../types';
@@ -76,6 +77,18 @@ export function ClothingToolbox() {
           }}
         >
           <ImageIcon size={17} />
+        </button>
+      </Tip>
+      <Tip label="Import an existing shirt, pants or T-shirt PNG to keep editing" side="right">
+        <button
+          className="icon-btn tool"
+          aria-label="Import existing clothing PNG"
+          onClick={async () => {
+            const [f] = await pickFiles('image/png,image/jpeg,image/webp', false);
+            if (f) await importClothingTemplate(f);
+          }}
+        >
+          <FileUp size={17} />
         </button>
       </Tip>
       <Tip label="Add color fill" side="right">
@@ -152,7 +165,10 @@ export function LayersList() {
   const update = useClothing((s) => s.updateLayer);
   const move = useClothing((s) => s.moveLayer);
   const remove = useClothing((s) => s.removeLayer);
+  const reorder = useClothing((s) => s.reorderLayer);
   const [editing, setEditing] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ id: string; above: boolean } | null>(null);
 
   if (!layers.length) {
     return (
@@ -166,7 +182,41 @@ export function LayersList() {
     <ul className="layer-list" aria-label={`${TEMPLATES[kind].label} layers`}>
       {[...layers].reverse().map((l) => (
         <li key={l.id}>
-          <div className={`lrow ${selectedId === l.id ? 'selected' : ''} ${!l.visible ? 'muted' : ''}`} onClick={() => select(l.id)}>
+          <div
+            className={`lrow ${selectedId === l.id ? 'selected' : ''} ${!l.visible ? 'muted' : ''} ${drop?.id === l.id ? (drop.above ? 'drop-above' : 'drop-below') : ''} ${dragId === l.id ? 'dragging' : ''}`}
+            onClick={() => select(l.id)}
+            draggable={editing !== l.id}
+            onDragStart={(e) => {
+              e.dataTransfer.setData('text/nexo-layer', l.id);
+              e.dataTransfer.effectAllowed = 'move';
+              setDragId(l.id);
+            }}
+            onDragEnd={() => {
+              setDragId(null);
+              setDrop(null);
+            }}
+            onDragOver={(e) => {
+              if (!dragId || dragId === l.id) return;
+              e.preventDefault();
+              const r = e.currentTarget.getBoundingClientRect();
+              setDrop({ id: l.id, above: e.clientY < r.top + r.height / 2 });
+            }}
+            onDragLeave={() => setDrop((d) => (d?.id === l.id ? null : d))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const from = e.dataTransfer.getData('text/nexo-layer') || dragId;
+              const above = drop?.above ?? true;
+              setDrop(null);
+              setDragId(null);
+              if (!from || from === l.id) return;
+              const fromIdx = layers.findIndex((x) => x.id === from);
+              const r = layers.findIndex((x) => x.id === l.id);
+              // the list shows the top layer first, so "above" means a higher array index
+              let slot = above ? r + 1 : r;
+              if (fromIdx < slot) slot -= 1;
+              reorder(from, slot);
+            }}
+          >
             <button className="icon-btn sm" aria-label={l.visible ? 'Hide layer' : 'Show layer'} onClick={(e) => (e.stopPropagation(), update(l.id, { visible: !l.visible }, `${l.id}:vis`))}>
               {l.visible ? <Eye size={12} /> : <EyeOff size={12} />}
             </button>
@@ -245,11 +295,29 @@ export function LayerProperties() {
   const remove = useClothing((s) => s.removeLayer);
   const tool = useClothing((s) => s.tool);
 
+  const recent = useClothing((s) => s.recentColors);
   const brushUi = (
-    <Section title="Brush">
-      <ColorField label="Color" value={brush.color} onChange={(v) => setBrush({ color: v })} />
-      <SliderField label="Size" value={brush.size} min={1} max={40} step={1} precision={0} onChange={(v) => setBrush({ size: v })} />
-      <p className="hint">Drag on the template, or directly on the 3D model. Strokes go on the selected paint layer, or a new one.</p>
+    <Section title={tool === 'eraser' ? 'Eraser' : 'Brush'}>
+      {tool === 'brush' && (
+        <>
+          <ColorField label="Color" value={brush.color} onChange={(v) => setBrush({ color: v })} />
+          {recent.length > 0 && (
+            <div className="swatches" aria-label="Recent colors">
+              {recent.map((c) => (
+                <button key={c} className="swatch" style={{ background: c }} aria-label={`Use ${c}`} title={c} onClick={() => setBrush({ color: c })} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+      <SliderField label="Size" value={brush.size} min={1} max={60} step={1} precision={0} onChange={(v) => setBrush({ size: v })} />
+      <SliderField label="Hardness" value={brush.hardness} min={0} max={1} step={0.05} onChange={(v) => setBrush({ hardness: v })} />
+      <SliderField label="Opacity" value={brush.opacity} min={0.05} max={1} step={0.05} onChange={(v) => setBrush({ opacity: v })} />
+      <Row label="Symmetry">
+        <input type="checkbox" checked={brush.symmetry} aria-label="Symmetry painting" onChange={(e) => setBrush({ symmetry: e.target.checked })} />
+        <span className="hint">Paint the left and right sides together</span>
+      </Row>
+      <p className="hint">Drag on the template or straight on the 3D model. Alt+click on the template picks a color. Each stroke is one undo step.</p>
     </Section>
   );
 
@@ -522,6 +590,16 @@ export function ImagesTab() {
           }}
         >
           <Upload size={14} /> Upload image
+        </button>
+        <button
+          className="btn"
+          title="Place an existing shirt, pants or T-shirt PNG at the bottom of this design"
+          onClick={async () => {
+            const [f] = await pickFiles('image/png,image/jpeg,image/webp', false);
+            if (f) await importClothingTemplate(f);
+          }}
+        >
+          <FileUp size={14} /> Import existing clothing PNG
         </button>
         <span className="hint">PNG, JPG, WebP or GIF. You can also drop pictures on the editor.</span>
       </div>

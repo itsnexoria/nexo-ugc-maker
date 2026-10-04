@@ -1,4 +1,4 @@
-import type { BlendMode, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, PatternLayer, ShapeLayer, ShapeType, TextLayer } from '../types';
+import type { BlendMode, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, PatternLayer, ShapeLayer, ShapeType, Stroke, TextLayer } from '../types';
 import { TEMPLATES, clipBounds, clipRects } from './templates';
 
 export interface RenderEnv {
@@ -190,6 +190,74 @@ export function shapePath(ctx: CanvasRenderingContext2D, shape: ShapeType, w: nu
 
 const paintCache = new WeakMap<PaintLayer, HTMLCanvasElement>();
 
+function drawStrokePath(g: CanvasRenderingContext2D, st: Stroke, color: string): void {
+  g.strokeStyle = color;
+  g.fillStyle = color;
+  g.lineWidth = st.size;
+  if (st.points.length === 1) {
+    g.beginPath();
+    g.arc(st.points[0][0], st.points[0][1], st.size / 2, 0, Math.PI * 2);
+    g.fill();
+  } else if (st.points.length > 1) {
+    g.beginPath();
+    g.moveTo(st.points[0][0], st.points[0][1]);
+    for (let i = 1; i < st.points.length; i++) g.lineTo(st.points[i][0], st.points[i][1]);
+    g.stroke();
+  }
+}
+
+/** Soft brush: radial-gradient stamps along the path (colour only, alpha handled by the caller). */
+function drawSoftStamps(g: CanvasRenderingContext2D, st: Stroke): void {
+  const r = st.size / 2;
+  const hard = Math.min(1, Math.max(0, st.hardness ?? 1));
+  const step = Math.max(0.5, st.size * 0.12);
+  const rgb = st.color;
+  const stamp = (x: number, y: number) => {
+    const grad = g.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, rgb);
+    grad.addColorStop(Math.min(0.999, hard), rgb);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad;
+    g.fillRect(x - r, y - r, r * 2, r * 2);
+  };
+  const pts = st.points;
+  if (pts.length === 1) return stamp(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1];
+    const [x1, y1] = pts[i];
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.max(1, Math.ceil(d / step));
+    for (let k = i === 1 ? 0 : 1; k <= n; k++) stamp(x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n);
+  }
+}
+
+function drawStroke(g: CanvasRenderingContext2D, st: Stroke, pxW: number, pxH: number, scale: number): void {
+  const alpha = Math.min(1, Math.max(0, st.alpha ?? 1));
+  const soft = (st.hardness ?? 1) < 0.97;
+  const op: GlobalCompositeOperation = st.erase ? 'destination-out' : 'source-over';
+  if (!soft && alpha >= 0.999) {
+    g.globalCompositeOperation = op;
+    drawStrokePath(g, st, st.color);
+    return;
+  }
+  // render the whole stroke at full strength on its own canvas, then apply its opacity once
+  const tmp = document.createElement('canvas');
+  tmp.width = pxW;
+  tmp.height = pxH;
+  const t = tmp.getContext('2d')!;
+  t.scale(scale, scale);
+  t.lineCap = 'round';
+  t.lineJoin = 'round';
+  if (soft) drawSoftStamps(t, st);
+  else drawStrokePath(t, st, st.color);
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = alpha;
+  g.globalCompositeOperation = op;
+  g.drawImage(tmp, 0, 0);
+  g.restore();
+}
+
 function paintCanvas(l: PaintLayer, pxW: number, pxH: number, scale: number): HTMLCanvasElement {
   const hit = paintCache.get(l);
   if (hit && hit.width === pxW && hit.height === pxH) return hit;
@@ -200,22 +268,7 @@ function paintCanvas(l: PaintLayer, pxW: number, pxH: number, scale: number): HT
   g.scale(scale, scale);
   g.lineCap = 'round';
   g.lineJoin = 'round';
-  for (const st of l.strokes) {
-    g.globalCompositeOperation = st.erase ? 'destination-out' : 'source-over';
-    g.strokeStyle = st.color;
-    g.fillStyle = st.color;
-    g.lineWidth = st.size;
-    if (st.points.length === 1) {
-      g.beginPath();
-      g.arc(st.points[0][0], st.points[0][1], st.size / 2, 0, Math.PI * 2);
-      g.fill();
-    } else if (st.points.length > 1) {
-      g.beginPath();
-      g.moveTo(st.points[0][0], st.points[0][1]);
-      for (let i = 1; i < st.points.length; i++) g.lineTo(st.points[i][0], st.points[i][1]);
-      g.stroke();
-    }
-  }
+  for (const st of l.strokes) drawStroke(g, st, pxW, pxH, scale);
   paintCache.set(l, c);
   return c;
 }

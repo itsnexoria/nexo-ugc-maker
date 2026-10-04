@@ -51,7 +51,7 @@ function geometryFor(o: SceneObject, models: Record<string, ModelAsset>): THREE.
     const m = o.modelId ? models[o.modelId] : undefined;
     return m ? getModelGeometry(m) : null;
   }
-  return getPrimitiveGeometry(o.kind);
+  return getPrimitiveGeometry(o.kind, o.detail);
 }
 
 export function objectTriangles(o: SceneObject, models: Record<string, ModelAsset>): number {
@@ -209,7 +209,7 @@ export function validateProject(input: ValidationInput): ValidationReport {
       id: 'parts',
       severity: 'info',
       title: `${visibleMeshes.length} separate parts`,
-      detail: 'Roblox accessories upload as a single mesh. Join the parts in Blender or your 3D tool after export.',
+      detail: 'Roblox accessories upload as a single mesh. Turn on "Join into one mesh" in the export dialog to get one mesh and one baked texture.',
     });
   }
   if (visibleMeshes.some((o) => o.material.opacity < 1)) {
