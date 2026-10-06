@@ -1,9 +1,12 @@
-import type { BlendMode, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, PatternLayer, ShapeLayer, ShapeType, Stroke, TextLayer } from '../types';
+import { IncrementalPaint } from '../utils/strokePaint';
+import type { BlendMode, ClothingKind, ClothingLayer, ImageLayer, PatternLayer, ShapeLayer, ShapeType, TextLayer } from '../types';
 import { TEMPLATES, clipBounds, clipRects } from './templates';
 
 export interface RenderEnv {
   /** Returns a decoded image for a library id, or null while it is still loading */
   getImage: (id: string) => CanvasImageSource | null;
+  /** Bumps when something a cached layer picture depends on changes (an image or a font finished loading) */
+  version: number;
 }
 
 const BLEND: Record<BlendMode, GlobalCompositeOperation> = {
@@ -188,91 +191,6 @@ export function shapePath(ctx: CanvasRenderingContext2D, shape: ShapeType, w: nu
 
 // ------------------------------------------------------------------ paint cache
 
-const paintCache = new WeakMap<PaintLayer, HTMLCanvasElement>();
-
-function drawStrokePath(g: CanvasRenderingContext2D, st: Stroke, color: string): void {
-  g.strokeStyle = color;
-  g.fillStyle = color;
-  g.lineWidth = st.size;
-  if (st.points.length === 1) {
-    g.beginPath();
-    g.arc(st.points[0][0], st.points[0][1], st.size / 2, 0, Math.PI * 2);
-    g.fill();
-  } else if (st.points.length > 1) {
-    g.beginPath();
-    g.moveTo(st.points[0][0], st.points[0][1]);
-    for (let i = 1; i < st.points.length; i++) g.lineTo(st.points[i][0], st.points[i][1]);
-    g.stroke();
-  }
-}
-
-/** Soft brush: radial-gradient stamps along the path (colour only, alpha handled by the caller). */
-function drawSoftStamps(g: CanvasRenderingContext2D, st: Stroke): void {
-  const r = st.size / 2;
-  const hard = Math.min(1, Math.max(0, st.hardness ?? 1));
-  const step = Math.max(0.5, st.size * 0.12);
-  const rgb = st.color;
-  const stamp = (x: number, y: number) => {
-    const grad = g.createRadialGradient(x, y, 0, x, y, r);
-    grad.addColorStop(0, rgb);
-    grad.addColorStop(Math.min(0.999, hard), rgb);
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = grad;
-    g.fillRect(x - r, y - r, r * 2, r * 2);
-  };
-  const pts = st.points;
-  if (pts.length === 1) return stamp(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) {
-    const [x0, y0] = pts[i - 1];
-    const [x1, y1] = pts[i];
-    const d = Math.hypot(x1 - x0, y1 - y0);
-    const n = Math.max(1, Math.ceil(d / step));
-    for (let k = i === 1 ? 0 : 1; k <= n; k++) stamp(x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n);
-  }
-}
-
-function drawStroke(g: CanvasRenderingContext2D, st: Stroke, pxW: number, pxH: number, scale: number): void {
-  const alpha = Math.min(1, Math.max(0, st.alpha ?? 1));
-  const soft = (st.hardness ?? 1) < 0.97;
-  const op: GlobalCompositeOperation = st.erase ? 'destination-out' : 'source-over';
-  if (!soft && alpha >= 0.999) {
-    g.globalCompositeOperation = op;
-    drawStrokePath(g, st, st.color);
-    return;
-  }
-  // render the whole stroke at full strength on its own canvas, then apply its opacity once
-  const tmp = document.createElement('canvas');
-  tmp.width = pxW;
-  tmp.height = pxH;
-  const t = tmp.getContext('2d')!;
-  t.scale(scale, scale);
-  t.lineCap = 'round';
-  t.lineJoin = 'round';
-  if (soft) drawSoftStamps(t, st);
-  else drawStrokePath(t, st, st.color);
-  g.save();
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.globalAlpha = alpha;
-  g.globalCompositeOperation = op;
-  g.drawImage(tmp, 0, 0);
-  g.restore();
-}
-
-function paintCanvas(l: PaintLayer, pxW: number, pxH: number, scale: number): HTMLCanvasElement {
-  const hit = paintCache.get(l);
-  if (hit && hit.width === pxW && hit.height === pxH) return hit;
-  const c = document.createElement('canvas');
-  c.width = pxW;
-  c.height = pxH;
-  const g = c.getContext('2d')!;
-  g.scale(scale, scale);
-  g.lineCap = 'round';
-  g.lineJoin = 'round';
-  for (const st of l.strokes) drawStroke(g, st, pxW, pxH, scale);
-  paintCache.set(l, c);
-  return c;
-}
-
 // ------------------------------------------------------------------ layers
 
 function applyClip(ctx: CanvasRenderingContext2D, kind: ClothingKind, clip: string): void {
@@ -365,52 +283,91 @@ function drawImageLayer(ctx: CanvasRenderingContext2D, l: ImageLayer, env: Rende
   ctx.drawImage(img, -l.w / 2, -l.h / 2, l.w, l.h);
 }
 
-export function drawLayers(ctx: CanvasRenderingContext2D, kind: ClothingKind, layers: ClothingLayer[], env: RenderEnv): void {
+function makeCanvas(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
+const paintRasters = new Map<string, IncrementalPaint>();
+
+export function forgetPaintLayer(id: string): void {
+  paintRasters.delete(id);
+}
+
+/** Cached picture of one layer (unclipped, full opacity). Re-made only when that layer object changes. */
+const rasterCache = new WeakMap<ClothingLayer, { key: string; canvas: HTMLCanvasElement }>();
+
+function rasterize(kind: ClothingKind, l: ClothingLayer, env: RenderEnv, pxW: number, pxH: number, scale: number): HTMLCanvasElement {
+  if (l.type === 'paint') {
+    let ip = paintRasters.get(l.id);
+    if (!ip) paintRasters.set(l.id, (ip = new IncrementalPaint()));
+    return ip.render(l.strokes, pxW, pxH, scale);
+  }
+  const key = `${pxW}x${pxH}|${env.version}`;
+  const hit = rasterCache.get(l);
+  if (hit && hit.key === key) return hit.canvas;
+  const canvas = hit && hit.canvas.width === pxW && hit.canvas.height === pxH ? hit.canvas : makeCanvas(pxW, pxH);
+  const ctx = canvas.getContext('2d')!;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, pxW, pxH);
+  ctx.save();
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  switch (l.type) {
+    case 'fill':
+      drawFill(ctx, kind, l);
+      break;
+    case 'pattern':
+      drawPattern(ctx, kind, l);
+      break;
+    case 'image':
+      drawImageLayer(ctx, l, env);
+      break;
+    case 'text':
+      drawText(ctx, l);
+      break;
+    case 'shape':
+      drawShape(ctx, l);
+      break;
+  }
+  ctx.restore();
+  rasterCache.set(l, { key, canvas });
+  return canvas;
+}
+
+/**
+ * Flattens a design onto ctx. `scale` is the pixel density (T-shirts are drawn larger than 128 px).
+ * Each layer's picture is cached, so editing one layer re-draws that layer and then just blits the rest.
+ */
+export function drawLayers(ctx: CanvasRenderingContext2D, kind: ClothingKind, layers: ClothingLayer[], env: RenderEnv, scale?: number): void {
   const spec = TEMPLATES[kind];
-  const scale = spec.scale;
-  const pxW = Math.round(spec.width * scale);
-  const pxH = Math.round(spec.height * scale);
+  const k = scale ?? spec.scale;
+  const pxW = Math.round(spec.width * k);
+  const pxH = Math.round(spec.height * k);
   ctx.save();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over';
   ctx.clearRect(0, 0, pxW, pxH);
   ctx.restore();
 
   for (const l of layers) {
     if (!l.visible || l.opacity <= 0) continue;
+    const pic = rasterize(kind, l, env, pxW, pxH, k);
     ctx.save();
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    ctx.setTransform(k, 0, 0, k, 0, 0);
     applyClip(ctx, kind, l.clip);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = Math.min(1, Math.max(0, l.opacity));
     ctx.globalCompositeOperation = BLEND[l.blend];
-    switch (l.type) {
-      case 'fill':
-        drawFill(ctx, kind, l);
-        break;
-      case 'pattern':
-        drawPattern(ctx, kind, l);
-        break;
-      case 'image':
-        drawImageLayer(ctx, l, env);
-        break;
-      case 'text':
-        drawText(ctx, l);
-        break;
-      case 'shape':
-        drawShape(ctx, l);
-        break;
-      case 'paint': {
-        const c = paintCanvas(l, pxW, pxH, scale);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(c, 0, 0);
-        break;
-      }
-    }
+    ctx.drawImage(pic, 0, 0);
     ctx.restore();
   }
 
   // Everything outside the template panels is ignored by Roblox, so keep it transparent.
   ctx.save();
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.setTransform(k, 0, 0, k, 0, 0);
   ctx.globalCompositeOperation = 'destination-in';
   ctx.beginPath();
   for (const p of spec.panels) ctx.rect(p.x, p.y, p.w, p.h);

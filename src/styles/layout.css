@@ -1153,3 +1153,118 @@ a {
 .small-screen p {
   max-width: 420px;
 }
+
+.viewport-wrap.painting canvas {
+  cursor: crosshair;
+}
+
+/* ---------- compact (tablet) layout ---------- */
+.only-compact {
+  display: none;
+}
+.app.compact {
+  --toolbox-w: 46px;
+}
+.app.compact .only-compact {
+  display: inline-flex;
+}
+.app.compact .workspace {
+  grid-template-columns: var(--toolbox-w) minmax(0, 1fr);
+}
+.app.compact .right {
+  position: fixed;
+  top: var(--topbar-h);
+  right: 0;
+  bottom: 0;
+  width: min(330px, 88vw);
+  z-index: 60;
+  transform: translateX(105%);
+  transition: transform 0.18s ease;
+  box-shadow: var(--shadow);
+}
+.app.compact.panels-open .right {
+  transform: none;
+}
+.app.compact .wordmark,
+.app.compact .save-status span:last-child,
+.app.compact .tb-center .btn.ghost {
+  font-size: 0;
+}
+.app.compact .tb-center .btn.ghost svg {
+  font-size: 12px;
+}
+.app.compact .tb-center .btn.ghost {
+  padding: 0 9px;
+  gap: 0;
+}
+.app.compact .wordmark {
+  display: none;
+}
+.app.compact .project-name {
+  width: 110px;
+}
+.app.compact .icon-btn.tool {
+  height: 38px;
+  width: 38px;
+}
+.app.compact .picker {
+  width: min(360px, calc(100vw - 70px));
+}
+.app.compact .vp-tl {
+  flex-wrap: wrap;
+  max-width: calc(100% - 20px);
+}
+.app.compact .vp-tr {
+  top: 52px;
+}
+.app.compact .icon-btn,
+.app.compact .btn.sm {
+  min-height: 30px;
+}
+.app.compact .cl-bar .hint,
+.app.compact .cl-bar .faint {
+  display: none;
+}
+.app.compact .asset-grid {
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+}
+.app.compact .mat-tab {
+  grid-template-columns: 1fr;
+}
+
+@media (max-width: 860px) {
+  .home {
+    grid-template-columns: 1fr;
+    overflow: auto;
+  }
+  .home-side {
+    padding: 28px 24px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .home-main {
+    padding: 24px;
+    overflow: visible;
+  }
+  body {
+    overflow: auto;
+  }
+  #root {
+    min-height: 100%;
+  }
+}
+@media (pointer: coarse) {
+  .icon-btn.sm {
+    width: 30px;
+    height: 30px;
+  }
+  .tree-actions,
+  .lrow-actions {
+    opacity: 1;
+  }
+  .numfield,
+  .input,
+  .select {
+    min-height: 32px;
+  }
+}

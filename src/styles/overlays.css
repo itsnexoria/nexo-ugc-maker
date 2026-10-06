@@ -269,3 +269,20 @@
   text-align: left;
   white-space: pre-wrap;
 }
+
+.trust-row {
+  display: flex;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.trust-row:last-of-type {
+  border-bottom: none;
+}
+.trust-row > svg {
+  flex: none;
+  margin-top: 2px;
+}
+.trust-row p {
+  margin: 2px 0 0;
+}

@@ -9,6 +9,7 @@ import { buildClothingGeometry, buildTshirtGeometry, bodyMapFor, kindCovers, typ
 import { TEMPLATES, panelAt } from '../clothing/templates';
 import { clothingTexture } from '../clothing/composite';
 import { viewportApi } from './api';
+import { flushStroke, queueStrokePoint } from '../clothing/strokeBatch';
 
 const noRaycast = () => null;
 const INFLATE: Record<ClothingKind, number> = { pants: 0.02, shirt: 0.045, tshirt: 0.07 };
@@ -59,16 +60,18 @@ function useHandlers(kind: ClothingKind) {
           const s = useClothing.getState();
           // crossing onto another panel starts a new stroke so no line is drawn across the template
           if (panel.id !== stroke.panelId) {
+            flushStroke();
             const r = s.beginStroke({ color: s.brush.color, size: s.brush.size, erase: tool === 'eraser', points: [pt] });
             stroke = { layerId: r.layerId, index: r.index, mirrorIndex: r.mirrorIndex, panelId: panel.id };
             return;
           }
-          s.extendStroke(stroke.layerId, stroke.index, pt, stroke.mirrorIndex);
+          queueStrokePoint(stroke.layerId, stroke.index, stroke.mirrorIndex, pt);
         }
       : undefined,
     onPointerUp: paint
       ? (e: ThreeEvent<PointerEvent>) => {
           if (!stroke) return;
+          flushStroke();
           stroke = null;
           if (viewportApi.controls) viewportApi.controls.enabled = true;
           (e.target as Element).releasePointerCapture?.(e.pointerId);
@@ -93,7 +96,9 @@ function useHandlers(kind: ClothingKind) {
 }
 
 function ClothingBox({ kind, map, size }: { kind: ClothingKind; map: BodyMap; size: Vec3 }) {
-  const geometry = useMemo(() => buildClothingGeometry(kind, map, size, INFLATE[kind]), [kind, map, size]);
+  const puff = useClothing((s) => s.puffiness);
+  const extra = Math.round(puff * 20) / 20; // quantised so dragging the slider does not rebuild geometry every pixel
+  const geometry = useMemo(() => buildClothingGeometry(kind, map, size, INFLATE[kind] + extra * (kind === 'shirt' ? 2 : 1)), [kind, map, size, extra]);
   useEffect(() => () => geometry.dispose(), [geometry]);
   const handlers = useHandlers(kind);
   return (

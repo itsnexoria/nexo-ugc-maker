@@ -4,12 +4,14 @@ import { SLOT_ANCHORS, SLOT_LABELS, BONES } from '../assets/avatar';
 import { duplicateSelection, requestDelete } from '../editor/actions';
 import { MaterialControls } from '../components/MaterialControls';
 import { TextureControls } from '../components/TextureControls';
-import { NumberField } from '../components/ui/Fields';
 import { Section } from '../components/ui/Section';
+import { forgetPaint } from '../utils/paint';
 import { useEditor } from '../store/editor';
 import { useLive } from '../store/live';
 import { useUI } from '../store/ui';
 import { useUserAssets } from '../store/userAssets';
+import { usePaintBrush } from '../store/paintBrush';
+import { ColorField, NumberField, SliderField, Switch } from '../components/ui/Fields';
 import { LOW_POLY_KINDS, SHAPE_LABELS, getModelGeometry, getPrimitiveGeometry, triangleCount } from '../utils/geometry';
 import { toSpec } from '../utils/scene';
 import type { SceneObject, SlotId, Vec3 } from '../types';
@@ -210,6 +212,64 @@ function ObjectSection({ obj }: { obj: SceneObject }) {
   );
 }
 
+function PaintSection({ obj }: { obj: SceneObject | undefined }) {
+  const brush = usePaintBrush();
+  const setRes = useEditor((s) => s.setPaintRes);
+  const clear = useEditor((s) => s.clearPaint);
+  const remove = useEditor((s) => s.removePaint);
+  const canPaint = !!obj && obj.kind !== 'group';
+  return (
+    <Section title="Paint">
+      <ColorField label="Color" value={brush.color} onChange={(v) => brush.set({ color: v })} />
+      {brush.recent.length > 0 && (
+        <div className="swatches" aria-label="Recent colors">
+          {brush.recent.map((c) => (
+            <button key={c} className="swatch" style={{ background: c }} aria-label={`Use ${c}`} title={c} onClick={() => brush.set({ color: c })} />
+          ))}
+        </div>
+      )}
+      <SliderField label="Size" value={brush.sizePct} min={1} max={30} step={0.5} precision={1} onChange={(v) => brush.set({ sizePct: v })} />
+      <SliderField label="Hardness" value={brush.hardness} min={0} max={1} step={0.05} onChange={(v) => brush.set({ hardness: v })} />
+      <SliderField label="Opacity" value={brush.opacity} min={0.05} max={1} step={0.05} onChange={(v) => brush.set({ opacity: v })} />
+      <div className="slider-row" style={{ gridTemplateColumns: '72px 1fr' }}>
+        <span className="slider-label">Eraser</span>
+        <Switch checked={brush.erase} onChange={(v) => brush.set({ erase: v })} label="Eraser" />
+      </div>
+      {canPaint ? (
+        <>
+          <div className="slider-row" style={{ gridTemplateColumns: '72px 1fr' }}>
+            <span className="slider-label">Texture</span>
+            <select className="select" aria-label="Paint texture size" value={obj!.paint?.res ?? 256} onChange={(e) => setRes(obj!.id, parseInt(e.target.value, 10) as 128 | 256 | 512)}>
+              <option value={128}>128 × 128 (lightest)</option>
+              <option value={256}>256 × 256</option>
+              <option value={512}>512 × 512 (sharpest)</option>
+            </select>
+          </div>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            <button className="btn sm" disabled={!obj!.paint?.strokes.length} onClick={() => clear(obj!.id)}>
+              Clear paint
+            </button>
+            <button
+              className="btn sm danger"
+              disabled={!obj!.paint}
+              title="Go back to the plain color and texture mapping"
+              onClick={() => {
+                forgetPaint(obj!.id);
+                remove(obj!.id);
+              }}
+            >
+              Remove paint
+            </button>
+          </div>
+        </>
+      ) : (
+        <p className="hint">Select a part, or just start painting on one.</p>
+      )}
+      <p className="hint">Drag on a part in the viewport. Painting turns the part's color and texture into one hand-painted texture with its own unwrapped UVs, so every face can be painted separately. Drag on empty space to orbit. Esc returns to Select.</p>
+    </Section>
+  );
+}
+
 function AvatarPartInfo({ name }: { name: string }) {
   const rig = useEditor((s) => s.rig);
   const bone = BONES[rig].find((b) => b.name === name);
@@ -235,21 +295,27 @@ export function PropertiesPanel() {
   const obj = useEditor((s) => (s.selectedId ? s.objects[s.selectedId] : undefined));
   const avatarPart = useEditor((s) => s.selectedAvatarPart);
   const count = useEditor((s) => Object.keys(s.objects).length);
+  const painting = useEditor((s) => s.tool === 'paint');
 
   if (avatarPart) return <AvatarPartInfo name={avatarPart} />;
   if (!id || !obj) {
     return (
-      <div className="empty">
-        <strong>{count ? 'Nothing selected' : 'Empty project'}</strong>
-        <span>{count ? 'Click a part in the viewport or the Scene list to edit its properties.' : 'Add a part from the toolbox, or pick a preset in the Assets tab.'}</span>
-      </div>
+      <>
+        {painting && <PaintSection obj={undefined} />}
+        <div className="empty">
+          <strong>{count ? 'Nothing selected' : 'Empty project'}</strong>
+          <span>{count ? 'Click a part in the viewport or the Scene list to edit its properties.' : 'Add a part from the toolbox, or pick a preset in the Assets tab.'}</span>
+        </div>
+      </>
     );
   }
   return (
     <div className="props">
+      {painting && <PaintSection obj={obj} />}
       <TransformSection obj={obj} />
       {obj.kind !== 'group' ? (
         <Section title="Appearance">
+          {obj.paint && <p className="hint">This part is hand-painted. Color and texture below are the starting layer under your brush strokes.</p>}
           <MaterialControls id={obj.id} />
         </Section>
       ) : (

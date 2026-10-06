@@ -95,3 +95,26 @@ export async function removeProject(id: string): Promise<void> {
 function structuredCloneSafe<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
+
+/** Closes the connection so the database can be deleted. */
+export async function closeDb(): Promise<void> {
+  if (!dbPromise) return;
+  try {
+    (await dbPromise).close();
+  } catch {
+    /* already closed or never opened */
+  }
+  dbPromise = null;
+}
+
+export function deleteDatabase(): Promise<void> {
+  memory.meta.clear();
+  memory.data.clear();
+  if (!hasIDB()) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.deleteDatabase(DB_NAME);
+    req.onsuccess = () => resolve();
+    req.onerror = () => reject(req.error ?? new Error('Could not delete the project database'));
+    req.onblocked = () => resolve(); // another tab still has it open; it is removed when that tab closes
+  });
+}

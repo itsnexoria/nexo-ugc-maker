@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { ModelAsset, SceneObject, TextureAsset } from '../types';
-import { getModelGeometry, getPrimitiveGeometry, triangleCount } from './geometry';
+import { getModelGeometry, getPaintGeometry, getPrimitiveGeometry, triangleCount } from './geometry';
+import { paintCanvasFor } from './paint';
 import { DEG, worldMatrix } from './math';
 
 /**
@@ -63,6 +64,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 
 function geometryOf(o: SceneObject, models: Record<string, ModelAsset>): THREE.BufferGeometry | null {
   if (o.kind === 'group') return null;
+  if (o.paint) return getPaintGeometry(o.kind, o.detail, o.modelId ? models[o.modelId] : undefined);
   if (o.kind === 'imported') {
     const m = o.modelId ? models[o.modelId] : undefined;
     return m ? getModelGeometry(m) : null;
@@ -119,10 +121,12 @@ export async function bakeMerged(input: BakeInput, atlasSize: AtlasSize, origin:
     if (!g.attributes.normal) g.computeVertexNormals();
     if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
     const tex = o.material.textureId ? input.textures.find((t) => t.id === o.material.textureId) : undefined;
+    const paintCanvas = paintCanvasFor(o, input.textures);
+    const uvFull = !!tex || !!paintCanvas;
     const rect = cellUv(grid, i);
     const uv = g.attributes.uv;
     for (let k = 0; k < uv.count; k++) {
-      if (tex) {
+      if (uvFull) {
         const u = Math.min(1, Math.max(0, uv.getX(k)));
         const v = Math.min(1, Math.max(0, uv.getY(k)));
         uv.setXY(k, rect.u0 + pad + u * (rect.u1 - rect.u0 - pad * 2), rect.v0 + pad + v * (rect.v1 - rect.v0 - pad * 2));
@@ -145,7 +149,10 @@ export async function bakeMerged(input: BakeInput, atlasSize: AtlasSize, origin:
       ctx.rect(x, y, cell, cell);
       ctx.clip();
       ctx.globalAlpha = Math.max(0, Math.min(1, o.material.opacity));
-      if (tex) {
+      if (paintCanvas) {
+        // hand-painted part: its whole painted texture becomes this part's cell
+        ctx.drawImage(paintCanvas, x, y, cell, cell);
+      } else if (tex) {
         let img = images.get(tex.id);
         if (!img) {
           img = await loadImage(tex.dataUrl);

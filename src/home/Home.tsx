@@ -6,11 +6,15 @@ import { NewProjectModal, OpenProjectModal, ProjectActions, importProjectFromDis
 import { openProject } from '../store/session';
 import { useUI } from '../store/ui';
 import { timeAgo } from '../utils/download';
+import { usePwa } from '../utils/pwa';
 
 export function Home() {
   const { list, error, refresh } = useProjectList();
   const [dialog, setDialog] = useState<'new' | 'open' | null>(null);
   const openModal = useUI((s) => s.openModal);
+  const canInstall = usePwa((s) => s.canInstall);
+  const install = usePwa((s) => s.install);
+  const offline = usePwa((s) => s.offline);
 
   return (
     <main className="home">
@@ -46,10 +50,20 @@ export function Home() {
           <button className="btn ghost sm" onClick={() => openModal('settings')}>
             <Settings size={13} /> Settings
           </button>
+          <button className="btn ghost sm" onClick={() => openModal('privacy')}>
+            Privacy
+          </button>
           <button className="btn ghost sm" onClick={() => openModal('about')}>
             About
           </button>
-          <span className="faint">Projects are saved in this browser only.</span>
+          {canInstall && (
+            <button className="btn sm" onClick={() => void install()}>
+              Install app
+            </button>
+          )}
+        </div>
+        <div className="faint" style={{ fontSize: 11.5 }}>
+          {offline ? 'You are offline. Everything still works. ' : ''}Projects are saved in this browser only. No accounts, no tracking.
         </div>
       </section>
 

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Backpack,
   Bird,
+  Brush,
   Box,
   Circle,
   Cone,
@@ -56,6 +57,7 @@ const TOOLS: { id: ToolMode; label: string; key: string; icon: ReactNode }[] = [
   { id: 'move', label: 'Move', key: 'W', icon: <Move3d size={17} /> },
   { id: 'rotate', label: 'Rotate', key: 'E', icon: <Rotate3d size={17} /> },
   { id: 'scale', label: 'Scale', key: 'R', icon: <Scale3d size={17} /> },
+  { id: 'paint', label: 'Paint on the part', key: 'B', icon: <Brush size={17} /> },
 ];
 
 export function Toolbox() {

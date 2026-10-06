@@ -41,6 +41,8 @@ export interface ClothingState {
   brush: BrushState;
   recentColors: string[];
   showGuides: boolean;
+  /** Extra thickness (studs) added to the clothing on the 3D preview to imitate puffy layered clothing. 0 = off. */
+  puffiness: number;
   viewMode: ViewMode;
   /** which clothing kinds are drawn on the 3D mannequin */
   shown: Record<ClothingKind, boolean>;
@@ -62,6 +64,7 @@ export interface ClothingState {
   setTool: (t: ClothingTool) => void;
   setBrush: (patch: Partial<BrushState>) => void;
   setShowGuides: (v: boolean) => void;
+  setPuffiness: (v: number) => void;
   setViewMode: (v: ViewMode) => void;
   setShown: (k: ClothingKind, v: boolean) => void;
 
@@ -78,6 +81,8 @@ export interface ClothingState {
 
   beginStroke: (stroke: Stroke) => { layerId: string; index: number; mirrorIndex: number | null };
   extendStroke: (layerId: string, index: number, point: [number, number], mirrorIndex?: number | null) => void;
+  /** Several points in one commit (pointer events are batched to one update per frame) */
+  extendStrokeMany: (layerId: string, index: number, points: [number, number][], mirrorIndex?: number | null) => void;
 
   addImage: (img: ClothingImage) => void;
   removeImage: (id: string) => void;
@@ -118,6 +123,7 @@ export const useClothing = create<ClothingState>((set, get) => {
     brush: { color: '#e3242b', size: 6, hardness: 1, opacity: 1, symmetry: false },
     recentColors: [],
     showGuides: true,
+    puffiness: 0,
     viewMode: 'split',
     shown: { shirt: true, pants: true, tshirt: true },
     revision: 0,
@@ -153,6 +159,7 @@ export const useClothing = create<ClothingState>((set, get) => {
     setTool: (tool) => set({ tool }),
     setBrush: (patch) => set((s) => ({ brush: { ...s.brush, ...patch } })),
     setShowGuides: (showGuides) => set({ showGuides }),
+    setPuffiness: (puffiness) => set({ puffiness: Math.max(0, Math.min(0.5, puffiness)) }),
     setViewMode: (viewMode) => set({ viewMode }),
     setShown: (k, v) => set((s) => ({ shown: { ...s.shown, [k]: v } })),
 
@@ -326,31 +333,47 @@ export const useClothing = create<ClothingState>((set, get) => {
       next = next.map((l) => (l.id === updated.id ? updated : l));
       if (!next.some((l) => l.id === updated.id)) next = [...next, updated];
       commit(stroke.erase ? 'Erased' : 'Painted', withLayers(kind, next), undefined, [kind]);
+      // later points of this stroke merge into this same undo step
+      set({ lastKey: `stroke:${updated.id}:${index}`, lastTime: Date.now() });
       const colors = [stroke.color, ...get().recentColors.filter((c) => c !== stroke.color)].slice(0, 8);
       set({ selectedId: updated.id, recentColors: stroke.erase ? get().recentColors : colors });
       return { layerId: updated.id, index, mirrorIndex };
     },
 
-    extendStroke: (layerId, index, point, mirrorIndex = null) => {
+    extendStroke: (layerId, index, point, mirrorIndex = null) => get().extendStrokeMany(layerId, index, [point], mirrorIndex),
+
+    extendStrokeMany: (layerId, index, points, mirrorIndex = null) => {
+      if (!points.length) return;
       const kind = findKind(layerId);
       if (!kind) return;
       const s = get();
-      const add = (st: Stroke, pt: [number, number]): Stroke => {
-        const last = st.points[st.points.length - 1];
-        if (last && Math.hypot(last[0] - pt[0], last[1] - pt[1]) < 0.4) return st;
-        return { ...st, points: [...st.points, pt] };
+      const add = (st: Stroke, pts: [number, number][]): Stroke => {
+        const fresh: [number, number][] = [];
+        let last = st.points[st.points.length - 1];
+        for (const pt of pts) {
+          if (last && Math.hypot(last[0] - pt[0], last[1] - pt[1]) < 0.4) continue;
+          fresh.push(pt);
+          last = pt;
+        }
+        return fresh.length ? { ...st, points: [...st.points, ...fresh] } : st;
       };
+      let changed = false;
       const layers = s.designs[kind].map((l) => {
         if (l.id !== layerId || l.type !== 'paint') return l;
         const strokes = l.strokes.slice();
         if (!strokes[index]) return l;
-        strokes[index] = add(strokes[index], point);
+        const grown = add(strokes[index], points);
+        if (grown !== strokes[index]) changed = true;
+        strokes[index] = grown;
         if (mirrorIndex !== null && strokes[mirrorIndex]) {
-          const mp = mirrorPoint(kind, point);
-          if (mp) strokes[mirrorIndex] = add(strokes[mirrorIndex], mp);
+          const mps = points.map((p) => mirrorPoint(kind, p)).filter((p): p is [number, number] => !!p);
+          const mg = add(strokes[mirrorIndex], mps);
+          if (mg !== strokes[mirrorIndex]) changed = true;
+          strokes[mirrorIndex] = mg;
         }
         return { ...l, strokes };
       });
+      if (!changed) return;
       commit('Painted', withLayers(kind, layers), `stroke:${layerId}:${index}`, [kind]);
     },
 

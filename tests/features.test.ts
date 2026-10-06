@@ -168,9 +168,101 @@ describe('clothing: import, reorder, symmetry', () => {
     expect(useClothing.getState().recentColors[0]).toBe('#ff0000');
   });
 
+  it('makes one undo step per brush stroke, symmetric or not', () => {
+    useClothing.getState().setBrush({ symmetry: true });
+    const before = useClothing.getState().past.length;
+    const r = useClothing.getState().beginStroke({ color: '#ff0000', size: 6, erase: false, points: [[275, 100]] });
+    for (let i = 1; i <= 8; i++) useClothing.getState().extendStrokeMany(r.layerId, r.index, [[275 + i, 100 + i]], r.mirrorIndex);
+    expect(useClothing.getState().past.length).toBe(before + 1);
+    useClothing.getState().undo();
+    const layer = useClothing.getState().designs.shirt.find((l) => l.type === 'paint');
+    expect(layer).toBeUndefined();
+  });
+
   it('keeps symmetry off by default', () => {
     useClothing.getState().setBrush({ symmetry: false });
     const r = useClothing.getState().beginStroke({ color: '#00ff00', size: 4, erase: false, points: [[275, 100]] });
     expect(r.mirrorIndex).toBeNull();
+  });
+});
+
+import { boxUnwrap, getPaintGeometry, getPrimitiveGeometry } from '../src/utils/geometry';
+
+describe('accessory texture painting', () => {
+  beforeEach(() => useEditor.getState().loadProject({ id: 'p', name: 'p', createdAt: 0 }, buildProject('blank')));
+
+  it('gives cubes six separate texture cells', () => {
+    const g = boxUnwrap(getPrimitiveGeometry('cube'));
+    const uv = g.attributes.uv;
+    const cells = new Set<string>();
+    for (let t = 0; t < uv.count; t += 3) {
+      const cu = (uv.getX(t) + uv.getX(t + 1) + uv.getX(t + 2)) / 3;
+      const cv = (uv.getY(t) + uv.getY(t + 1) + uv.getY(t + 2)) / 3;
+      cells.add(`${Math.floor(cu * 3)},${Math.floor((1 - cv) * 2)}`);
+    }
+    expect(cells.size).toBe(6);
+    for (let i = 0; i < uv.count; i++) {
+      expect(uv.getX(i)).toBeGreaterThanOrEqual(0);
+      expect(uv.getX(i)).toBeLessThanOrEqual(1);
+      expect(uv.getY(i)).toBeGreaterThanOrEqual(0);
+      expect(uv.getY(i)).toBeLessThanOrEqual(1);
+    }
+    expect(g.attributes.position.count / 3).toBe(12);
+  });
+
+  it('keeps triangle counts and reuses native UVs for round shapes', () => {
+    for (const k of ['cube', 'cylinder', 'cone', 'wedge', 'sphere', 'torus'] as const) {
+      const a = getPrimitiveGeometry(k);
+      const b = getPaintGeometry(k);
+      const tris = (g: typeof a) => (g.index ? g.index.count : g.attributes.position.count) / 3;
+      expect(tris(b), k).toBe(tris(a));
+    }
+    expect(getPaintGeometry('sphere')).toBe(getPrimitiveGeometry('sphere'));
+    expect(getPaintGeometry('cube')).toBe(getPaintGeometry('cube')); // cached
+  });
+
+  it('paints, merges a drag into one undo step, rescales and clears', () => {
+    const id = useEditor.getState().addPrimitive('cube');
+    const past = useEditor.getState().past.length;
+    const idx = useEditor.getState().beginPaintStroke(id, { color: '#ff0000', size: 12, erase: false, points: [[10, 10]] });
+    expect(idx).toBe(0);
+    for (let i = 1; i <= 5; i++) useEditor.getState().extendPaintStroke(id, 0, [[10 + i * 5, 10 + i * 5]]);
+    const o = useEditor.getState().objects[id];
+    expect(o.paint?.res).toBe(256);
+    expect(o.paint?.strokes[0].points).toHaveLength(6);
+    expect(useEditor.getState().past.length).toBe(past + 1); // the whole stroke is ONE undo step
+    useEditor.getState().setPaintRes(id, 512);
+    const s = useEditor.getState().objects[id].paint!;
+    expect(s.res).toBe(512);
+    expect(s.strokes[0].size).toBe(24);
+    expect(s.strokes[0].points[0]).toEqual([20, 20]);
+    useEditor.getState().clearPaint(id);
+    expect(useEditor.getState().objects[id].paint!.strokes).toHaveLength(0);
+    useEditor.getState().removePaint(id);
+    expect(useEditor.getState().objects[id].paint).toBeUndefined();
+    useEditor.getState().undo();
+    expect(useEditor.getState().objects[id].paint).toBeDefined();
+  });
+
+  it('refuses to paint a group and counts painted parts as textures in validation', () => {
+    const hat = ASSETS.find((a) => a.id === 'hat-basic')!;
+    const root = useEditor.getState().addAccessory(hat.build(), 'hat');
+    expect(useEditor.getState().beginPaintStroke(root, { color: '#fff', size: 4, erase: false, points: [[1, 1]] })).toBe(-1);
+    const part = Object.values(useEditor.getState().objects).find((o) => o.kind === 'cylinder')!;
+    useEditor.getState().beginPaintStroke(part.id, { color: '#fff', size: 4, erase: false, points: [[1, 1]] });
+    const s = useEditor.getState();
+    const r = validateProject({ objects: s.objects, order: s.order, layers: s.layers, textures: s.textures, models: s.models });
+    const tex = r.results.find((x) => x.id === 'tex')!;
+    expect(tex.severity).toBe('ok');
+    expect(tex.detail).toContain('hand-painted');
+  });
+
+  it('survives project save/load', () => {
+    const id = useEditor.getState().addPrimitive('sphere');
+    useEditor.getState().beginPaintStroke(id, { color: '#00ff00', size: 9, erase: false, hardness: 0.5, alpha: 0.7, points: [[5, 5], [9, 9]] });
+    const data = JSON.parse(JSON.stringify(useEditor.getState().serialize()));
+    useEditor.getState().loadProject({ id: 'q', name: 'q', createdAt: 0 }, data);
+    const o = useEditor.getState().objects[id];
+    expect(o.paint?.strokes[0]).toMatchObject({ color: '#00ff00', hardness: 0.5, alpha: 0.7 });
   });
 });

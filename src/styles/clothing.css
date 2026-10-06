@@ -182,3 +182,45 @@
 .swatch:hover {
   border-color: var(--text);
 }
+
+.layered-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+.beta-tag {
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  white-space: nowrap;
+}
+.warn-box {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-radius: var(--r);
+}
+.warn-box svg {
+  flex: none;
+  margin-top: 2px;
+}
+.puff-ctl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 150px;
+  font-size: 12px;
+}
+.puff-ctl input {
+  flex: 1;
+}

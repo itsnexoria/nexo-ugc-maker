@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { selectedLayer, useClothing } from '../store/clothing';
 import type { ClothingLayer, ImageLayer, ShapeLayer, TextLayer } from '../types';
 import { ensureComposite, canvasFor, getComposite } from './composite';
+import { flushStroke, queueStrokePoint } from './strokeBatch';
 import { layerBox, pointInBox, type LayerBox } from './render';
 import { TEMPLATES } from './templates';
 import { r15JointOffsets } from './mapping';
@@ -21,6 +22,21 @@ type Drag =
   | { mode: 'paint'; layerId: string; index: number; mirrorIndex: number | null };
 
 const HANDLE = 5;
+
+let checkerTile: HTMLCanvasElement | null = null;
+function checkerPattern(ctx: CanvasRenderingContext2D): CanvasPattern | string {
+  if (!checkerTile) {
+    checkerTile = document.createElement('canvas');
+    checkerTile.width = checkerTile.height = 16;
+    const g = checkerTile.getContext('2d')!;
+    g.fillStyle = '#2a2a30';
+    g.fillRect(0, 0, 16, 16);
+    g.fillStyle = '#222227';
+    g.fillRect(0, 0, 8, 8);
+    g.fillRect(8, 8, 8, 8);
+  }
+  return ctx.createPattern(checkerTile, 'repeat') ?? '#26262b';
+}
 
 function handlePoints(b: LayerBox): { corners: [number, number][]; rot: [number, number] } {
   const a = (b.rotation * Math.PI) / 180;
@@ -50,6 +66,8 @@ export function DesignCanvas() {
   const [view, setView] = useState<View>({ zoom: 1, x: 0, y: 0 });
   const drag = useRef<Drag | null>(null);
   const space = useRef(false);
+  const touches = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; mx: number; my: number; view: View } | null>(null);
   const hover = useRef<[number, number] | null>(null);
   const [, bump] = useState(0);
 
@@ -113,18 +131,13 @@ export function DesignCanvas() {
     ctx.translate(view.x, view.y);
     ctx.scale(view.zoom, view.zoom);
 
-    // transparency checkerboard inside the template
-    const cell = 8;
+    // transparency checkerboard inside the template (one cached 16 px tile, filled as a pattern)
     ctx.save();
     ctx.beginPath();
     ctx.rect(0, 0, spec.width, spec.height);
     ctx.clip();
-    for (let y = 0; y < spec.height; y += cell) {
-      for (let x = 0; x < spec.width; x += cell) {
-        ctx.fillStyle = (x / cell + y / cell) % 2 === 0 ? '#2a2a30' : '#222227';
-        ctx.fillRect(x, y, cell, cell);
-      }
-    }
+    ctx.fillStyle = checkerPattern(ctx);
+    ctx.fillRect(0, 0, spec.width, spec.height);
     ctx.restore();
 
     ensureComposite(kind);
@@ -235,6 +248,17 @@ export function DesignCanvas() {
 
   const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const el = e.currentTarget;
+    if (e.pointerType === 'touch') {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.current.size === 2) {
+        // second finger: cancel whatever the first one started and switch to pinch-zoom / two-finger pan
+        drag.current = null;
+        const [a, b] = [...touches.current.values()];
+        pinch.current = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2, view };
+        el.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
     const s = useClothing.getState();
     const [x, y] = toTemplate(e.clientX, e.clientY);
 
@@ -251,7 +275,7 @@ export function DesignCanvas() {
       if (e.altKey && tool === 'brush') {
         // eyedropper: Alt+click picks the colour under the pointer
         const src = getComposite(kind);
-        const px = src.getContext('2d', { willReadFrequently: true })?.getImageData(Math.floor(x * spec.scale), Math.floor(y * spec.scale), 1, 1).data;
+        const px = src.getContext('2d', { willReadFrequently: true })?.getImageData(Math.floor((x * src.width) / spec.width), Math.floor((y * src.height) / spec.height), 1, 1).data;
         if (px && px[3] > 0) s.setBrush({ color: `#${[px[0], px[1], px[2]].map((v) => v.toString(16).padStart(2, '0')).join('')}` });
         return;
       }
@@ -290,6 +314,24 @@ export function DesignCanvas() {
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.pointerType === 'touch' && touches.current.has(e.pointerId)) {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (pinch.current && touches.current.size >= 2) {
+        const [a, b] = [...touches.current.values()];
+        const p0 = pinch.current;
+        const dist = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+        const mx = (a.x + b.x) / 2;
+        const my = (a.y + b.y) / 2;
+        const r = e.currentTarget.getBoundingClientRect();
+        const zoom = Math.min(8, Math.max(0.2, p0.view.zoom * (dist / p0.dist)));
+        const k = zoom / p0.view.zoom;
+        // keep the point between the fingers fixed, and follow it as the fingers move
+        const ax = p0.mx - r.left;
+        const ay = p0.my - r.top;
+        setView({ zoom, x: mx - r.left - (ax - p0.view.x) * k, y: my - r.top - (ay - p0.view.y) * k });
+        return;
+      }
+    }
     const [x, y] = toTemplate(e.clientX, e.clientY);
     const d = drag.current;
     const s = useClothing.getState();
@@ -314,11 +356,14 @@ export function DesignCanvas() {
       if (e.shiftKey) deg = Math.round(deg / 15) * 15;
       s.updateLayer(d.id, { rotation: Math.round(deg * 10) / 10 } as Partial<ClothingLayer>, `${d.id}:rot`);
     } else if (d.mode === 'paint') {
-      s.extendStroke(d.layerId, d.index, [x, y], d.mirrorIndex);
+      queueStrokePoint(d.layerId, d.index, d.mirrorIndex, [x, y]);
     }
   };
 
   const end = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    touches.current.delete(e.pointerId);
+    if (touches.current.size < 2) pinch.current = null;
+    if (drag.current?.mode === 'paint') flushStroke();
     drag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   };

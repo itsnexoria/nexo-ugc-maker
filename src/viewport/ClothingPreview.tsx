@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
@@ -7,7 +7,7 @@ import { useEditor } from '../store/editor';
 import { useSettings } from '../store/settings';
 import { Avatar } from './Avatar';
 import { CameraRig, Floor, QUALITY, Studio } from './Viewport';
-import { syncTextures } from '../clothing/composite';
+import { resetTextures, syncTextures } from '../clothing/composite';
 import type { Vec3 } from '../types';
 
 function TextureSync() {
@@ -23,6 +23,8 @@ export function ClothingPreview() {
   const controls = useRef<OrbitControlsImpl>(null);
   const projectId = useEditor((s) => s.project.id);
   const initial: Vec3 = [-6.2, 4.2, -8.4];
+  // textures are created per quality level (mipmaps off on Low), so rebuild them when it changes
+  useEffect(() => () => resetTextures(), [quality]);
 
   return (
     <div className="viewport-wrap">

@@ -166,11 +166,12 @@ export function Viewport() {
   const wrap = useRef<HTMLDivElement>(null);
   const projectId = useEditor((s) => s.project.id);
   const shadows = useSettings((s) => s.shadows);
+  const painting = useEditor((s) => s.tool === 'paint');
   const initial = useMemo(() => useEditor.getState().camera.position as Vec3, [projectId]);
 
   return (
     <div
-      className="viewport-wrap"
+      className={`viewport-wrap ${painting ? 'painting' : ''}`}
       ref={wrap}
       onDragOver={(e) => {
         if (e.dataTransfer.types.includes('Files')) e.preventDefault();

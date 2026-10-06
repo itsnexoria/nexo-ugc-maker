@@ -7,7 +7,7 @@ export type ShapeKind = PrimitiveKind | MeshKind | 'imported' | 'group';
 
 export type SlotId = 'hat' | 'hair' | 'face' | 'shoulder' | 'back' | 'waist' | 'accessory';
 export type RigType = 'R6' | 'R15';
-export type ToolMode = 'select' | 'move' | 'rotate' | 'scale';
+export type ToolMode = 'select' | 'move' | 'rotate' | 'scale' | 'paint';
 export type AnimationId = 'rest' | 'idle' | 'walk' | 'run' | 'jump';
 
 export interface MaterialProps {
@@ -46,6 +46,13 @@ export interface SceneObject {
   slot?: SlotId;
   /** Mesh resolution of primitives. 'low' uses far fewer triangles. */
   detail?: 'low' | 'normal';
+  /** Hand-painted texture. Strokes are in pixels of a res x res image. Replaces colour/texture mapping on this part. */
+  paint?: PaintData;
+}
+
+export interface PaintData {
+  res: 128 | 256 | 512;
+  strokes: Stroke[];
 }
 
 export interface Layer {

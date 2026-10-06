@@ -44,7 +44,7 @@ export function Gizmo() {
     if (cur !== target) setTarget(cur);
   });
 
-  if (!target || preview || tool === 'select' || locked || hidden || !selectedId) return null;
+  if (!target || preview || tool === 'select' || tool === 'paint' || locked || hidden || !selectedId) return null;
   const mode = tool === 'move' ? 'translate' : tool;
 
   const push = () => {

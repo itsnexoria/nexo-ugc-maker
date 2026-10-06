@@ -116,9 +116,9 @@ export function faceUvPixels(kind: ClothingKind, map: BodyMap, face: FaceId, p: 
  * Box geometry whose UVs point into the clothing template. `inflate` pushes the
  * surface slightly outside the body so it never z-fights with it.
  */
-export function buildClothingGeometry(kind: ClothingKind, map: BodyMap, size: Vec3, inflate = 0.03): THREE.BufferGeometry {
+export function buildClothingGeometry(kind: ClothingKind, map: BodyMap, size: Vec3, inflate = 0.03, segments = 1): THREE.BufferGeometry {
   const spec = TEMPLATES[kind];
-  const g = new THREE.BoxGeometry(size[0] + inflate, size[1] + inflate, size[2] + inflate);
+  const g = new THREE.BoxGeometry(size[0] + inflate, size[1] + inflate, size[2] + inflate, segments, segments, segments);
   const pos = g.attributes.position;
   const nor = g.attributes.normal;
   const uv = g.attributes.uv;

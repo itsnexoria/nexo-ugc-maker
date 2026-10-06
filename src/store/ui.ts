@@ -4,7 +4,7 @@ import type { AssetCategory, LogEntry, LogLevel } from '../types';
 
 export type BottomTab = 'scene' | 'objects' | 'materials' | 'textures' | 'layers' | 'assets' | 'console';
 export type RightTab = 'properties' | 'validation';
-export type ModalId = 'settings' | 'export' | 'exportClothing' | 'new' | 'open' | 'shortcuts' | 'about' | null;
+export type ModalId = 'settings' | 'export' | 'exportClothing' | 'privacy' | 'new' | 'open' | 'shortcuts' | 'about' | null;
 
 export interface MenuItem {
   label?: string;
@@ -54,6 +54,9 @@ interface UIState {
   logs: LogEntry[];
   busy: string | null;
   tour: 'accessory' | 'clothing' | null;
+  /** Compact (tablet) layout: is the right-hand panel drawer open? */
+  panelsOpen: boolean;
+  togglePanels: (open?: boolean) => void;
 
   startTour: (mode: 'accessory' | 'clothing') => void;
   endTour: () => void;
@@ -94,6 +97,8 @@ export const useUI = create<UIState>((set, get) => ({
   logs: [{ id: 0, time: Date.now(), level: 'info', message: 'Nexo UGC Studio ready.' }],
   busy: null,
   tour: null,
+  panelsOpen: false,
+  togglePanels: (open) => set((s) => ({ panelsOpen: open ?? !s.panelsOpen })),
 
   startTour: (tour) => set({ tour, contextMenu: null, modal: null }),
   endTour: () => set({ tour: null }),

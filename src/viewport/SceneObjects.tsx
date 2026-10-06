@@ -7,7 +7,9 @@ import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { useViewport } from '../store/viewport';
 import { DEG } from '../utils/math';
-import { getModelGeometry, getPrimitiveGeometry } from '../utils/geometry';
+import { getModelGeometry, getPaintGeometry, getPrimitiveGeometry } from '../utils/geometry';
+import { paintCanvasFor, usePaintRev } from '../utils/paint';
+import { usePaintBrush } from '../store/paintBrush';
 import type { SceneObject, SlotId } from '../types';
 import { viewportApi } from './api';
 import { applyTextureTransform, loadBaseTexture } from './textures';
@@ -43,14 +45,18 @@ function Follower({ slot, children }: { slot?: SlotId; children: ReactNode }) {
 export function useObjectMaterial(obj: SceneObject): THREE.MeshStandardMaterial {
   const material = useMemo(() => new THREE.MeshStandardMaterial(), []);
   const wireframe = useViewport((s) => s.wireframe);
-  const texAsset = useEditor((s) => (obj.material.textureId ? s.textures.find((t) => t.id === obj.material.textureId) : undefined));
+  const painted = !!obj.paint;
+  const textures = useEditor((s) => s.textures);
+  const paintRev = usePaintRev((s) => s.rev);
+  const paintTex = useRef<THREE.CanvasTexture | null>(null);
+  const texAsset = useEditor((s) => (!obj.paint && obj.material.textureId ? s.textures.find((t) => t.id === obj.material.textureId) : undefined));
   const texRef = useRef<THREE.Texture | null>(null);
   const latest = useRef(obj.material);
   latest.current = obj.material;
   const m = obj.material;
 
   useEffect(() => {
-    material.color.set(m.color);
+    material.color.set(painted ? '#ffffff' : m.color);
     material.metalness = m.metalness;
     material.roughness = m.roughness;
     material.emissive.set(m.emissive);
@@ -61,7 +67,35 @@ export function useObjectMaterial(obj: SceneObject): THREE.MeshStandardMaterial 
     material.opacity = m.opacity;
     material.depthWrite = !transparent;
     material.wireframe = wireframe;
-  }, [material, m.color, m.metalness, m.roughness, m.emissive, m.emissiveIntensity, m.opacity, wireframe]);
+  }, [material, painted, m.color, m.metalness, m.roughness, m.emissive, m.emissiveIntensity, m.opacity, wireframe]);
+
+  // hand-painted texture: one canvas per part, updated in place as strokes arrive
+  useEffect(() => {
+    if (!obj.paint) {
+      if (paintTex.current) {
+        if (material.map === paintTex.current) {
+          material.map = null;
+          material.needsUpdate = true;
+        }
+        paintTex.current.dispose();
+        paintTex.current = null;
+      }
+      return;
+    }
+    const canvas = paintCanvasFor(obj, textures);
+    if (!canvas) return;
+    if (!paintTex.current || paintTex.current.image !== canvas) {
+      paintTex.current?.dispose();
+      const t = new THREE.CanvasTexture(canvas);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      paintTex.current = t;
+      material.map = t;
+      material.needsUpdate = true;
+    } else {
+      paintTex.current.needsUpdate = true;
+    }
+  }, [material, obj, textures, paintRev]);
 
   useEffect(() => {
     let cancelled = false;
@@ -99,6 +133,7 @@ export function useObjectMaterial(obj: SceneObject): THREE.MeshStandardMaterial 
   useEffect(
     () => () => {
       texRef.current?.dispose();
+      paintTex.current?.dispose();
       material.dispose();
     },
     [material],
@@ -107,13 +142,66 @@ export function useObjectMaterial(obj: SceneObject): THREE.MeshStandardMaterial 
   return material;
 }
 
+// ---- painting directly on a part (pointer events give the exact texture coordinate under the cursor)
+let paintStroke: { id: string; index: number; res: number } | null = null;
+let pendingPts: [number, number][] = [];
+let paintRaf = 0;
+
+function flushPaint(): void {
+  if (paintRaf) cancelAnimationFrame(paintRaf);
+  paintRaf = 0;
+  if (paintStroke && pendingPts.length) useEditor.getState().extendPaintStroke(paintStroke.id, paintStroke.index, pendingPts);
+  pendingPts = [];
+}
+
+function uvPoint(e: ThreeEvent<PointerEvent>, res: number): [number, number] | null {
+  if (!e.uv) return null;
+  return [e.uv.x * res, (1 - e.uv.y) * res];
+}
+
+function beginPaint(e: ThreeEvent<PointerEvent>, id: string): void {
+  if (e.button !== 0) return;
+  const ed = useEditor.getState();
+  const res = ed.objects[id]?.paint?.res ?? 256;
+  const pt = uvPoint(e, res);
+  if (!pt) return;
+  e.stopPropagation();
+  if (viewportApi.controls) viewportApi.controls.enabled = false;
+  (e.target as Element).setPointerCapture?.(e.pointerId);
+  const brush = usePaintBrush.getState();
+  ed.select(id);
+  const index = ed.beginPaintStroke(id, { color: brush.color, size: Math.max(1, (brush.sizePct / 100) * res), erase: brush.erase, hardness: brush.hardness, alpha: brush.opacity, points: [pt] });
+  if (index < 0) return;
+  if (!brush.erase) brush.use(brush.color);
+  paintStroke = { id, index, res: useEditor.getState().objects[id]?.paint?.res ?? res };
+}
+
+function movePaint(e: ThreeEvent<PointerEvent>, id: string): void {
+  if (!paintStroke || paintStroke.id !== id) return;
+  const pt = uvPoint(e, paintStroke.res);
+  if (!pt) return;
+  pendingPts.push(pt);
+  if (!paintRaf) paintRaf = requestAnimationFrame(flushPaint);
+}
+
+function endPaint(e: ThreeEvent<PointerEvent>): void {
+  if (!paintStroke) return;
+  flushPaint();
+  paintStroke = null;
+  if (viewportApi.controls) viewportApi.controls.enabled = true;
+  (e.target as Element).releasePointerCapture?.(e.pointerId);
+}
+
 const MeshPart = memo(function MeshPart({ obj, pickable }: { obj: SceneObject; pickable: boolean }) {
   const material = useObjectMaterial(obj);
   const model = useEditor((s) => (obj.modelId ? s.models[obj.modelId] : undefined));
+  const painted = !!obj.paint;
   const geometry = useMemo(() => {
+    if (painted) return getPaintGeometry(obj.kind, obj.detail, model);
     if (obj.kind === 'imported') return model ? getModelGeometry(model) : getPrimitiveGeometry('cube');
     return getPrimitiveGeometry(obj.kind, obj.detail);
-  }, [obj.kind, obj.detail, model]);
+  }, [obj.kind, obj.detail, model, painted]);
+  const paintTool = useEditor((s) => s.tool === 'paint');
 
   const id = obj.id;
   return (
@@ -127,6 +215,9 @@ const MeshPart = memo(function MeshPart({ obj, pickable }: { obj: SceneObject; p
         e.stopPropagation();
         useEditor.getState().select(id);
       }}
+      onPointerDown={paintTool && pickable ? (e: ThreeEvent<PointerEvent>) => beginPaint(e, id) : undefined}
+      onPointerMove={paintTool && pickable ? (e: ThreeEvent<PointerEvent>) => movePaint(e, id) : undefined}
+      onPointerUp={paintTool ? (e: ThreeEvent<PointerEvent>) => endPaint(e) : undefined}
       onContextMenu={(e: ThreeEvent<MouseEvent>) => {
         e.stopPropagation();
         if (e.delta > 4) return;

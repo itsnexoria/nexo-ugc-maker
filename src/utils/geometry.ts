@@ -138,3 +138,78 @@ export const SHAPE_LABELS: Record<ShapeKind, string> = {
   imported: 'Imported mesh',
   group: 'Group',
 };
+
+// ---------- paintable (unique UV) geometry
+
+/** Shapes whose built-in UVs already cover the surface once, so they can be painted as they are. */
+const NATIVE_UNIQUE: ShapeKind[] = ['sphere', 'capsule', 'torus', 'torusknot', 'arch', 'icosphere'];
+const paintCache = new Map<string, THREE.BufferGeometry>();
+
+/**
+ * Box-projects a mesh into a 3 x 2 grid of cells (+X, -X, +Y, -Y, +Z, -Z) so no two triangles share
+ * texture space. Used for shapes whose own UVs overlap (cubes, cylinders, imported meshes).
+ */
+export function boxUnwrap(src: THREE.BufferGeometry): THREE.BufferGeometry {
+  const g = src.index ? src.toNonIndexed() : src.clone();
+  g.computeBoundingBox();
+  const bb = g.boundingBox!;
+  const size = bb.getSize(new THREE.Vector3());
+  const pos = g.attributes.position;
+  const uv = new Float32Array(pos.count * 2);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  const ext = (v: number) => (v > 1e-6 ? v : 1);
+  const margin = 0.03;
+  for (let t = 0; t < pos.count; t += 3) {
+    a.fromBufferAttribute(pos, t);
+    b.fromBufferAttribute(pos, t + 1);
+    c.fromBufferAttribute(pos, t + 2);
+    n.crossVectors(b.clone().sub(a), c.clone().sub(a));
+    const ax = Math.abs(n.x);
+    const ay = Math.abs(n.y);
+    const az = Math.abs(n.z);
+    let cell: number;
+    let pu: (v: THREE.Vector3) => number;
+    let pv: (v: THREE.Vector3) => number;
+    if (ax >= ay && ax >= az) {
+      cell = n.x >= 0 ? 0 : 1;
+      pu = (v) => (v.z - bb.min.z) / ext(size.z);
+      pv = (v) => (v.y - bb.min.y) / ext(size.y);
+    } else if (ay >= ax && ay >= az) {
+      cell = n.y >= 0 ? 2 : 3;
+      pu = (v) => (v.x - bb.min.x) / ext(size.x);
+      pv = (v) => (v.z - bb.min.z) / ext(size.z);
+    } else {
+      cell = n.z >= 0 ? 4 : 5;
+      pu = (v) => (v.x - bb.min.x) / ext(size.x);
+      pv = (v) => (v.y - bb.min.y) / ext(size.y);
+    }
+    const col = cell % 3;
+    const row = Math.floor(cell / 3);
+    [a, b, c].forEach((v, i) => {
+      const u = col + margin + (1 - margin * 2) * pu(v);
+      const w = row + margin + (1 - margin * 2) * pv(v);
+      uv[(t + i) * 2] = u / 3;
+      uv[(t + i) * 2 + 1] = 1 - w / 2;
+    });
+  }
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.computeVertexNormals();
+  g.computeBoundingBox();
+  return g;
+}
+
+/** Geometry used when a part has hand-painted texture: same shape, but every triangle has its own texels. */
+export function getPaintGeometry(kind: ShapeKind, detail: Detail = 'normal', model?: ModelAsset): THREE.BufferGeometry {
+  const base = kind === 'imported' ? (model ? getModelGeometry(model) : getPrimitiveGeometry('cube')) : getPrimitiveGeometry(kind, detail);
+  if (NATIVE_UNIQUE.includes(kind)) return base;
+  const key = kind === 'imported' ? `model:${model?.id}` : `${kind}:${detail}`;
+  let g = paintCache.get(key);
+  if (!g) {
+    g = boxUnwrap(base);
+    paintCache.set(key, g);
+  }
+  return g;
+}

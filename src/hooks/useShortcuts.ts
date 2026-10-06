@@ -113,6 +113,7 @@ export function useShortcuts(): void {
       if (e.key === 'Escape') {
         const vp = useViewport.getState();
         if (vp.previewMode) vp.setPreviewMode(false);
+        else if (ed.tool === 'paint') ed.setTool('select');
         else ed.select(null);
         return;
       }
@@ -144,6 +145,9 @@ export function useShortcuts(): void {
           break;
         case 'r':
           ed.setTool('scale');
+          break;
+        case 'b':
+          ed.setTool('paint');
           break;
         case 'g':
           useSettings.getState().set('showGrid', !useSettings.getState().showGrid);

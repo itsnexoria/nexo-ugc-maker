@@ -51,7 +51,7 @@ function geometryFor(o: SceneObject, models: Record<string, ModelAsset>): THREE.
     const m = o.modelId ? models[o.modelId] : undefined;
     return m ? getModelGeometry(m) : null;
   }
-  return getPrimitiveGeometry(o.kind, o.detail);
+  return getPrimitiveGeometry(o.kind, o.detail); // painted parts have the same triangle count
 }
 
 export function objectTriangles(o: SceneObject, models: Record<string, ModelAsset>): number {
@@ -177,7 +177,9 @@ export function validateProject(input: ValidationInput): ValidationReport {
   // --- textures
   const usedIds = new Set<string>();
   const missing: SceneObject[] = [];
+  const painted = meshes.filter((o) => o.paint && o.paint.strokes.length > 0);
   for (const o of meshes) {
+    if (o.paint) continue; // painted parts replace their texture mapping
     const id = o.material.textureId;
     if (!id) continue;
     usedIds.add(id);
@@ -185,10 +187,11 @@ export function validateProject(input: ValidationInput): ValidationReport {
   }
   if (missing.length) {
     results.push({ id: 'tex-missing', severity: 'error', title: 'Missing textures', detail: `${missing.map((o) => o.name).join(', ')} references a texture that is no longer in the library.`, objectIds: missing.map((o) => o.id) });
-  } else if (usedIds.size === 0) {
+  } else if (usedIds.size === 0 && painted.length === 0) {
     results.push({ id: 'tex', severity: 'info', title: 'No texture applied', detail: 'Optional. Colours and materials export, but Roblox uploads normally use one texture map.' });
   } else {
-    results.push({ id: 'tex', severity: 'ok', title: 'Texture detected', detail: `${usedIds.size} texture${usedIds.size === 1 ? '' : 's'} in use.` });
+    const bits = [usedIds.size ? `${usedIds.size} texture${usedIds.size === 1 ? '' : 's'} in use` : '', painted.length ? `${painted.length} hand-painted part${painted.length === 1 ? '' : 's'}` : ''].filter(Boolean);
+    results.push({ id: 'tex', severity: 'ok', title: 'Texture detected', detail: `${bits.join(', ')}.` });
   }
   for (const id of usedIds) {
     const t = textures.find((x) => x.id === id);

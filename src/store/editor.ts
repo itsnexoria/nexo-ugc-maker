@@ -14,6 +14,7 @@ import type {
   ShapeKind,
   Snapshot,
   SlotId,
+  Stroke,
   TextureAsset,
   ToolMode,
   Vec3,
@@ -21,6 +22,7 @@ import type {
 import { applyPresetToMaterial, DEFAULT_MATERIAL } from '../assets/materials';
 import { SLOT_ANCHORS } from '../assets/avatar';
 import { LOW_POLY_KINDS, SHAPE_LABELS } from '../utils/geometry';
+import { emptyPaint, forgetPaint, strokeScale } from '../utils/paint';
 import { objectTriangles } from '../utils/validation';
 import { uid } from '../utils/ids';
 import { decomposeMatrix, isFiniteVec, localMatrix, subVec, worldMatrix } from '../utils/math';
@@ -109,6 +111,11 @@ export interface EditorState {
   reparent: (id: string, newParentId: string | null) => void;
   setRig: (rig: RigType) => void;
   setDetail: (id: string, detail: 'low' | 'normal') => void;
+  beginPaintStroke: (id: string, stroke: Stroke) => number;
+  extendPaintStroke: (id: string, index: number, points: [number, number][]) => void;
+  setPaintRes: (id: string, res: 128 | 256 | 512) => void;
+  clearPaint: (id: string) => void;
+  removePaint: (id: string) => void;
   /** Switches the heaviest primitives to low-poly until the visible triangle count fits the budget. */
   optimizeTriangles: (budget: number) => { before: number; after: number; changed: number };
 
@@ -483,6 +490,65 @@ export const useEditor = create<EditorState>((set, get) => {
         project: { ...s.project, saveStatus: 'unsaved' },
       });
       useUI.getState().log('info', `Switched rig ${prevRig} → ${rig}`);
+    },
+
+    beginPaintStroke: (id, stroke) => {
+      const cur = get().objects[id];
+      if (!cur || cur.kind === 'group') return -1;
+      const paint = cur.paint ?? emptyPaint();
+      const strokes = [...paint.strokes, stroke];
+      const objects = patchObject(id, { paint: { ...paint, strokes } });
+      if (objects) {
+        commit(`${stroke.erase ? 'Erased on' : 'Painted on'} ${cur.name}`, { objects });
+        // later points of this stroke merge into this same undo step
+        set({ lastKey: `paint:${id}:${strokes.length - 1}`, lastTime: Date.now() });
+      }
+      return strokes.length - 1;
+    },
+
+    extendPaintStroke: (id, index, points) => {
+      const cur = get().objects[id];
+      if (!cur?.paint || !cur.paint.strokes[index] || !points.length) return;
+      const st = cur.paint.strokes[index];
+      const fresh: [number, number][] = [];
+      let last = st.points[st.points.length - 1];
+      for (const pt of points) {
+        if (last && Math.hypot(last[0] - pt[0], last[1] - pt[1]) < 0.3) continue;
+        fresh.push(pt);
+        last = pt;
+      }
+      if (!fresh.length) return;
+      const strokes = cur.paint.strokes.slice();
+      strokes[index] = { ...st, points: [...st.points, ...fresh] };
+      const objects = patchObject(id, { paint: { ...cur.paint, strokes } });
+      if (objects) commit('Painted', { objects }, `paint:${id}:${index}`);
+    },
+
+    setPaintRes: (id, res) => {
+      const cur = get().objects[id];
+      if (!cur) return;
+      const old = cur.paint?.res ?? res;
+      const k = res / old;
+      const paint = { res, strokes: (cur.paint?.strokes ?? []).map((st) => strokeScale(st, k)) };
+      const objects = patchObject(id, { paint });
+      if (objects) commit(`Painted texture size ${res}`, { objects });
+    },
+
+    clearPaint: (id) => {
+      const cur = get().objects[id];
+      if (!cur?.paint) return;
+      const objects = patchObject(id, { paint: { ...cur.paint, strokes: [] } });
+      if (objects) commit(`Cleared paint on ${cur.name}`, { objects });
+    },
+
+    removePaint: (id) => {
+      const cur = get().objects[id];
+      if (!cur?.paint) return;
+      const { paint: _drop, ...rest } = cur;
+      void _drop;
+      const objects = { ...get().objects, [id]: rest as SceneObject };
+      commit(`Removed paint from ${cur.name}`, { objects });
+      forgetPaint(id);
     },
 
     setDetail: (id, detail) => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Download, Eye, FilePlus2, FolderOpen, HelpCircle, Home, Info, Keyboard, Pencil, Redo2, Save, Settings, Trash2, Undo2, Upload, User } from 'lucide-react';
+import { PanelRight, Copy, Download, Eye, FilePlus2, FolderOpen, HelpCircle, Home, Info, Keyboard, Pencil, Redo2, Save, Settings, Trash2, Undo2, Upload, User } from 'lucide-react';
 import { createElement } from 'react';
 import { useEditor } from '../store/editor';
 import { useClothing } from '../store/clothing';
@@ -148,6 +148,7 @@ export function TopBar({ mode = 'accessory' }: { mode?: 'accessory' | 'clothing'
         onClick: async () => useUI.getState().toast((await copyDiagnostics()) ? 'success' : 'warn', 'Diagnostics copied. Paste them into your bug report. Nothing is sent automatically.'),
       },
       { label: 'Settings', icon: ic(Settings), onClick: () => openModal('settings') },
+      { label: 'Privacy and your data', icon: ic(Info), onClick: () => openModal('privacy') },
       { label: 'About Nexo UGC Studio', icon: ic(Info), onClick: () => openModal('about') },
     ]);
   };
@@ -205,6 +206,11 @@ export function TopBar({ mode = 'accessory' }: { mode?: 'accessory' | 'clothing'
       </div>
 
       <div className="tb-right">
+        <Tip label="Show or hide the properties panel">
+          <button className="icon-btn only-compact" aria-label="Toggle panels" onClick={() => useUI.getState().togglePanels()}>
+            <PanelRight size={17} />
+          </button>
+        </Tip>
         <button className="btn primary" onClick={() => openModal(clothing ? 'exportClothing' : 'export')}>
           <Upload size={14} /> Export
         </button>

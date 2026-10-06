@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { tourSeen } from '../components/Tour';
+import { useCompact } from '../hooks/useCompact';
 import { ChevronDown, ChevronUp, Grid3x3, Maximize, RotateCcw } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Tip } from '../components/ui/Tooltip';
@@ -80,6 +81,8 @@ function CenterBar() {
   const setGuides = useClothing((s) => s.setShowGuides);
   const kind = useClothing((s) => s.activeKind);
   const tool = useClothing((s) => s.tool);
+  const puff = useClothing((s) => s.puffiness);
+  const setPuff = useClothing((s) => s.setPuffiness);
   const hints: Record<string, string> = {
     select: 'Drag layers to move them. Space + drag pans, scroll zooms.',
     place: 'Select a layer, then click the 3D model to place it.',
@@ -104,6 +107,12 @@ function CenterBar() {
         <button className="icon-btn boxed" aria-label="Fit template" onClick={() => window.dispatchEvent(new Event('nexo:fit-design'))}>
           <Maximize size={14} />
         </button>
+      </Tip>
+      <Tip label="Layered preview: thickens the clothing on the 3D model to imitate puffy layered clothing">
+        <label className="puff-ctl">
+          <span className="dim">Puffiness</span>
+          <input type="range" min={0} max={0.4} step={0.02} value={puff} aria-label="Puffiness preview" onChange={(e) => setPuff(parseFloat(e.target.value))} />
+        </label>
       </Tip>
       <span className="hint grow truncate">{hints[tool]}</span>
       <span className="faint">
@@ -153,6 +162,13 @@ export function ClothingWorkspace() {
   const mode = useClothing((s) => s.viewMode);
   const [dragOver, setDragOver] = useState(false);
   const projectId = useEditor((s) => s.project.id);
+  const compact = useCompact();
+  const panelsOpen = useUI((s) => s.panelsOpen);
+  const setMode = useClothing((s) => s.setViewMode);
+  // one pane at a time on a tablet: the template is the main thing
+  useEffect(() => {
+    if (compact && useClothing.getState().viewMode === 'split') setMode('2d');
+  }, [compact, setMode]);
   useEffect(() => {
     const t = setTimeout(() => {
       if (!tourSeen('clothing') && !useUI.getState().modal) useUI.getState().startTour('clothing');
@@ -160,7 +176,7 @@ export function ClothingWorkspace() {
     return () => clearTimeout(t);
   }, [projectId]);
   return (
-    <div className="app clothing">
+    <div className={`app clothing ${compact ? 'compact' : ''} ${panelsOpen ? 'panels-open' : ''}`}>
       <TopBar mode="clothing" />
       <div className="workspace">
         <ClothingToolbox />

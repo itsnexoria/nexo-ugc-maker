@@ -4,7 +4,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { BONES, robloxAttachmentFor } from '../assets/avatar';
 import { bakeMerged, type AtlasSize } from './bake';
 import type { Layer, MaterialProps, ModelAsset, RigType, SceneObject, TextureAsset } from '../types';
-import { getModelGeometry, getPrimitiveGeometry, triangleCount } from './geometry';
+import { getModelGeometry, getPaintGeometry, getPrimitiveGeometry, triangleCount } from './geometry';
+import { paintCanvasFor } from './paint';
 import { DEG, localMatrix, worldMatrix } from './math';
 
 export type ExportFormat = 'obj' | 'glb' | 'gltf';
@@ -88,7 +89,6 @@ async function exportMergedGltf(input: ExportInput, opts: ExportOptions): Promis
   if (baked.atlas) {
     const tex = new THREE.CanvasTexture(baked.atlas);
     tex.colorSpace = THREE.SRGBColorSpace;
-    tex.flipY = false;
     mat.map = tex;
   }
   const mesh = new THREE.Mesh(baked.geometry, mat);
@@ -123,6 +123,7 @@ function isVisible(o: SceneObject, input: ExportInput, includeHidden: boolean): 
 
 function geometryOf(o: SceneObject, input: ExportInput): THREE.BufferGeometry | null {
   if (o.kind === 'group') return null;
+  if (o.paint) return getPaintGeometry(o.kind, o.detail, o.modelId ? input.models[o.modelId] : undefined);
   if (o.kind === 'imported') {
     const m = o.modelId ? input.models[o.modelId] : undefined;
     return m ? getModelGeometry(m) : null;
@@ -233,7 +234,13 @@ async function exportObj(input: ExportInput, opts: ExportOptions): Promise<Expor
     const name = unique(o.name);
     let texFile: string | null = null;
     const tex = o.material.textureId ? input.textures.find((t) => t.id === o.material.textureId) : undefined;
-    if (tex) {
+    const paintCanvas = paintCanvasFor(o, input.textures);
+    if (paintCanvas) {
+      const blob: Blob = await new Promise((res, rej) => paintCanvas.toBlob((b) => (b ? res(b) : rej(new Error('Could not write a painted texture.'))), 'image/png'));
+      texFile = `textures/${safe(o.name)}_paint_${texFiles.size + 1}.png`;
+      zip.file(texFile, blob);
+      texFiles.set(`paint:${o.id}`, texFile);
+    } else if (tex) {
       if (!texFiles.has(tex.id)) {
         const { bytes, ext } = dataUrlToBytes(tex.dataUrl);
         const file = `textures/${safe(tex.name)}_${texFiles.size + 1}.${ext}`;
@@ -243,7 +250,7 @@ async function exportObj(input: ExportInput, opts: ExportOptions): Promise<Expor
       texFile = texFiles.get(tex.id)!;
     }
     parts.push({ name, geometry: g, matrix: unit.clone().multiply(worldMatrix(input.objects, id)), materialName: `${name}_mat` });
-    mtl.push(mtlFor(`${name}_mat`, o.material, texFile));
+    mtl.push(mtlFor(`${name}_mat`, paintCanvas ? { ...o.material, color: '#ffffff' } : o.material, texFile));
     tris += triangleCount(g);
   }
 
@@ -300,7 +307,7 @@ export async function buildExportScene(input: ExportInput, opts: ExportOptions):
       t.name = safe(asset.name);
       t.colorSpace = THREE.SRGBColorSpace;
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.flipY = false;
+      // keep flipY at its default: GLTFExporter then flips the image so it matches three.js UVs (v up)
       t.needsUpdate = true;
       textures.set(id, t);
     }
@@ -339,7 +346,14 @@ export async function buildExportScene(input: ExportInput, opts: ExportOptions):
         transparent: o.material.opacity < 1,
         opacity: o.material.opacity,
       });
-      if (o.material.textureId) {
+      const paintCanvas = paintCanvasFor(o, input.textures);
+      if (paintCanvas) {
+        const pt = new THREE.CanvasTexture(paintCanvas);
+        pt.colorSpace = THREE.SRGBColorSpace;
+        pt.name = `${safe(o.name)}_paint`;
+        mat.map = pt;
+        mat.color.set('#ffffff');
+      } else if (o.material.textureId) {
         const base = await getTexture(o.material.textureId);
         if (base) {
           const t = base.clone();

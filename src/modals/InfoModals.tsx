@@ -10,7 +10,7 @@ const SHORTCUTS: [string, string][] = [
   ['Ctrl + D', 'Duplicate selected object'],
   ['F', 'Focus selected object'],
   ['F2', 'Rename selected object'],
-  ['V  W  E  R', 'Select, move, rotate, scale'],
+  ['V  W  E  R  B', 'Select, move, rotate, scale, paint'],
   ['G  /  X', 'Toggle grid / snap to grid'],
   ['L  /  Z', 'Toggle lighting / wireframe'],
   ['1 – 5', 'Camera: front, back, left, right, 3/4'],
