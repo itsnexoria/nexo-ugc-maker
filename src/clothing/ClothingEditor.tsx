@@ -4,6 +4,7 @@ import { useCompact } from '../hooks/useCompact';
 import { ChevronDown, ChevronUp, Grid3x3, Maximize, RotateCcw } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Tip } from '../components/ui/Tooltip';
+import { TestFitButton } from '../components/TestFitPanel';
 import { ConsoleTab } from '../panels/BottomTabs';
 import { handleDroppedFiles } from '../editor/importers';
 import { useEditor } from '../store/editor';
@@ -13,7 +14,7 @@ import { CAMERA_TARGET, DEFAULT_CAMERA, useViewport } from '../store/viewport';
 import type { AnimationId } from '../types';
 import { ClothingPreview } from '../viewport/ClothingPreview';
 import { DesignCanvas } from './DesignCanvas';
-import { ClothingToolbox, ImagesTab, KindTabs, LayerProperties, LayersList, PresetsTab } from './ClothingPanels';
+import { ClothingToolbox, HistoryPanel, ImagesTab, KindTabs, LayerProperties, LayersList, PresetsTab, SendToButton } from './ClothingPanels';
 import { TEMPLATES } from './templates';
 
 const ANIMS: { id: AnimationId; label: string }[] = [
@@ -61,6 +62,9 @@ function PreviewControls() {
           </button>
         </Tip>
       </div>
+      <div className="vp-tr">
+        <TestFitButton />
+      </div>
       <div className="vp-bc">
         <div className="seg" role="group" aria-label="Animation preview">
           {ANIMS.map((a) => (
@@ -98,6 +102,11 @@ function CenterBar() {
           </button>
         ))}
       </div>
+      <Tip label="Check and tune how clothing maps onto R15 avatars">
+        <button className="btn sm" onClick={() => useUI.getState().openModal('r15')}>
+          R15 fit
+        </button>
+      </Tip>
       <Tip label="Show panel outlines and labels">
         <button className={`icon-btn boxed ${guides ? 'active' : ''}`} aria-pressed={guides} aria-label="Toggle template guides" onClick={() => setGuides(!guides)}>
           <Grid3x3 size={14} />
@@ -161,6 +170,7 @@ function Bottom() {
 export function ClothingWorkspace() {
   const mode = useClothing((s) => s.viewMode);
   const [dragOver, setDragOver] = useState(false);
+  const [layersTab, setLayersTab] = useState<'layers' | 'history'>('layers');
   const projectId = useEditor((s) => s.project.id);
   const compact = useCompact();
   const panelsOpen = useUI((s) => s.panelsOpen);
@@ -215,10 +225,17 @@ export function ClothingWorkspace() {
         <aside className="right" aria-label="Layers and properties">
           <KindTabs />
           <div className="cl-layers">
-            <div className="col-title" style={{ padding: '6px 10px 0', marginBottom: 4 }}>
-              Layers
+            <div className="row layers-head">
+              <button className={`mini-tab ${layersTab === 'layers' ? 'on' : ''}`} onClick={() => setLayersTab('layers')}>
+                Layers
+              </button>
+              <button className={`mini-tab ${layersTab === 'history' ? 'on' : ''}`} onClick={() => setLayersTab('history')}>
+                History
+              </button>
+              <div className="grow" />
+              {layersTab === 'layers' && <SendToButton />}
             </div>
-            <LayersList />
+            {layersTab === 'layers' ? <LayersList /> : <HistoryPanel />}
           </div>
           <div className="right-body">
             <LayerProperties />

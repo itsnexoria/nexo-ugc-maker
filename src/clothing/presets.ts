@@ -1,6 +1,6 @@
 import type { ClothingKind, ClothingLayer, FillLayer, PatternLayer, ShapeLayer, TextLayer } from '../types';
 import { uid } from '../utils/ids';
-import { clipBounds, panelById } from './templates';
+import { TEMPLATES, clipBounds, panelById } from './templates';
 
 /**
  * Starter designs. Everything is built from ordinary layers, so presets stay fully editable.
@@ -219,6 +219,47 @@ function glowStar(): ClothingLayer[] {
   ];
 }
 
+// ------------------------------------------------------------------ calibration
+
+function hslHex(h: number, s: number, l: number): string {
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(-1, Math.min(k - 3, Math.min(9 - k, 1)));
+    return Math.round(255 * c)
+      .toString(16)
+      .padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+/**
+ * Test pattern for checking how Roblox maps the template onto R15 and where each panel faces.
+ * Every side panel is cut into numbered 16 px bands (0 at the top), so the band you see at an elbow,
+ * wrist, knee or waist in Roblox tells you where the segment boundary really is.
+ */
+export function r15TestPattern(kind: 'shirt' | 'pants'): ClothingLayer[] {
+  const layers: ClothingLayer[] = [fill('Test base', '#101114')];
+  const spec = TEMPLATES[kind];
+  spec.panels.forEach((p, i) => {
+    const hue = (i * 47) % 360;
+    const side = p.face !== 'top' && p.face !== 'bottom';
+    layers.push(rect(kind, `${p.id} tint`, p.id, p.x + p.w / 2, p.y + p.h / 2, p.w, p.h, hslHex(hue, 0.55, 0.32)));
+    if (side) {
+      for (let b = 0; b < p.h / 16; b++) {
+        if (b % 2 === 0) layers.push(rect(kind, `${p.id} band ${b}`, p.id, p.x + p.w / 2, p.y + b * 16 + 8, p.w, 16, hslHex(hue, 0.6, 0.45)));
+        layers.push(text(`${p.id} n${b}`, p.id, String(b), p.x + 9, p.y + b * 16 + 8, 10, '#ffffff', { bold: true, align: 'center' }));
+      }
+      layers.push(text(`${p.id} label`, p.id, p.label.replace(' side', ''), p.x + p.w / 2 + 6, p.y + p.h / 2, p.w > 100 ? 13 : 8, '#ffffff', { stroke: '#000000', strokeWidth: 3 }));
+    } else {
+      layers.push(text(`${p.id} label`, p.id, p.face === 'top' ? 'TOP' : 'BOTTOM', p.x + p.w / 2, p.y + p.h / 2, 12, '#ffffff', { stroke: '#000000', strokeWidth: 3 }));
+      // the front edge of top/bottom panels, to check their orientation on the avatar
+      layers.push(text(`${p.id} front`, p.id, 'front edge', p.x + p.w / 2, p.face === 'top' ? p.y + p.h - 7 : p.y + 7, 8, '#ffd24a', { stroke: '#000000', strokeWidth: 2 }));
+    }
+  });
+  return layers;
+}
+
 export const CLOTHING_PRESETS: ClothingPreset[] = [
   { id: 'shirt-cyber', kind: 'shirt', name: 'Cyber jacket', description: 'Dark jacket, red stripes, wrap-around sleeve bands', swatch: ['#121317', RED], build: cyberJacket },
   { id: 'shirt-hoodie', kind: 'shirt', name: 'Hoodie', description: 'Grey hoodie with pocket, strings and cuffs', swatch: ['#5a5d66', '#3c3e45'], build: hoodie },
@@ -227,6 +268,8 @@ export const CLOTHING_PRESETS: ClothingPreset[] = [
   { id: 'pants-jeans', kind: 'pants', name: 'Jeans', description: 'Denim with belt, stitching and back pockets', swatch: ['#2f4b7c', '#c9a45a'], build: jeans },
   { id: 'pants-track', kind: 'pants', name: 'Track pants', description: 'Black with white side stripes', swatch: ['#17181c', '#f2f2f4'], build: trackPants },
   { id: 'pants-cargo', kind: 'pants', name: 'Cargo pants', description: 'Olive with leg pockets', swatch: ['#6d6c4f', '#44432f'], build: cargo },
+  { id: 'shirt-r15test', kind: 'shirt', name: 'R15 test pattern', description: 'Numbered 16 px bands for checking the R15 mapping', swatch: ['#101114', '#7a4bd1'], build: () => r15TestPattern('shirt') },
+  { id: 'pants-r15test', kind: 'pants', name: 'R15 test pattern', description: 'Numbered 16 px bands for checking the R15 mapping', swatch: ['#101114', '#7a4bd1'], build: () => r15TestPattern('pants') },
   { id: 'tshirt-badge', kind: 'tshirt', name: 'N badge', description: 'Hexagon badge with wordmark', swatch: ['#121317', RED], build: nBadge },
   { id: 'tshirt-slogan', kind: 'tshirt', name: 'Slogan', description: 'Bold two-line slogan', swatch: ['#f2f2f4', RED], build: slogan },
   { id: 'tshirt-star', kind: 'tshirt', name: 'Supernova', description: 'Gradient with a star', swatch: [RED, '#16171b'], build: glowStar },

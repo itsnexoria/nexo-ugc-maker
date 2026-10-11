@@ -40,7 +40,10 @@ export function buildDiagnostics(extra?: string): string {
 }
 
 export async function copyDiagnostics(extra?: string): Promise<boolean> {
-  const text = buildDiagnostics(extra);
+  return copyText(buildDiagnostics(extra));
+}
+
+export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text);
     return true;

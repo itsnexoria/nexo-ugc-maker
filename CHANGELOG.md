@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.0
+- Clothing: multi-select with box select, group move/edit/duplicate/delete and alignment; History tab with click-to-jump; pattern and gradient brushes; Send to (shirt layers to pants and back).
+- R15: adjustable segment split saved with the project and a numbered test pattern for checking against a real avatar.
+- Layered clothing: build from Roblox's own cage template (FBX/GLB/glTF) keeping the template cage's vertices, UVs and skin, with the classic design baked onto the cage UVs. Untested against Roblox's real files.
+- Accessories: symmetry painting across the accessory's centre line, one undo step per stroke.
+- Test fit: skin tones, body scaling, sample outfits and headwear for both editors.
+- Performance check with a quality recommendation, an adaptive slow-device suggestion, and touch polish.
+
 ## 1.3.0
 - **Fixed:** in split view the 3D clothing preview did not follow edits (the 2D editor redrew the shared canvas first, so the 3D texture was never flagged for upload). Each texture now tracks the version it last uploaded.
 - **Fixed:** exported GLB textures were vertically flipped relative to their UVs (the merged atlas pointed parts at the wrong cells). The exporter now flips the image the way three.js UVs expect.

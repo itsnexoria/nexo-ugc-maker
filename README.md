@@ -40,6 +40,9 @@ Create a project with **New Project → Clothing**. One project holds a Shirt, P
 - **Brush controls**: size, hardness (soft edges), opacity (applied per stroke, so overlaps do not build up), **symmetry painting** (left and right sides together), recent colors, and an Alt+click eyedropper. Every stroke is one undo step.
 - **Import an existing shirt/pants/T-shirt PNG** and keep editing it. A file that is exactly 585 × 559 lines up 1:1 with the template and goes to the bottom of the stack; other sizes are scaled to fit with a warning. Dropping a matching PNG on the editor does the same.
 - **Reorder layers by dragging** in the Layers list (one undo step per move).
+- **Quality of life**: multi-select layers (Shift = range, Ctrl/Cmd = add, drag a box on the template, Ctrl+A), move/duplicate/delete/restyle them together, align tools, a labelled **History** tab where you can click any step to jump there, **pattern and gradient brushes**, and **Send to** copying a shirt's layers to pants (sleeves become legs).
+- **R15 fit calibration** (*R15 fit* button): adjust the lower-torso share and the upper/lower limb split, saved with the project, plus a downloadable **numbered test pattern** (16 px bands, panel labels, a "front edge" marker on top/bottom panels) to check the mapping on a real R15 avatar and tune the preview to match.
+- **Layered clothing from Roblox's cage template** (beta, untested against the real files): load `Clothing_Cage_Template.fbx` or `ClassicMannequin_With-Cages.fbx` (downloaded from Roblox's layered clothing project files) and the tool derives the garment and both cages from it. The inner cage is the template's own mesh, unchanged (same vertices, UVs and skin weights), the outer cage is pushed out along its normals, and your classic design is baked onto the cage's UVs. Choose the front axis if the design lands backwards. A UV layout PNG is available for painting elsewhere.
 - **Layered clothing starter (beta)**: *Export → Layered clothing starter* gives a garment mesh skinned to an R15 skeleton plus `_InnerCage` / `_OuterCage` placeholder meshes, textured with your design. It is **not upload-ready**: Roblox requires cage vertices and UVs to match its own template cages, which this tool cannot reproduce, so you must swap in Roblox's cages (Blender) and fit the mesh to Roblox's R15 body. The *Puffiness* slider previews a thicker, layered look on the 3D model.
 - **Fast on weak laptops**: every layer's picture is cached, paint layers keep their pixels between edits, pointer events are batched to one update per frame, and GPU uploads are rate-limited by the quality setting. A brush move went from ~105 ms to ~3 ms in the benchmark (`tests/e2e/paint-benchmark.py`). Low quality also previews T-shirts at a lower density and skips mipmaps; exports always render at full quality.
 - **Mirror** copies a layer to the opposite sleeve/leg, flipped, in the right place.
@@ -51,9 +54,15 @@ Create a project with **New Project → Clothing**. One project holds a Shirt, P
 
 Limits to be aware of: this is **classic** clothing only (flat template images). Layered clothing needs a cage and rig in a 3D tool and is not supported. Template positions come from Roblox's Creator Docs (sizes) and DevForum UV tables (positions).
 
+## Test fit
+
+The *Test fit* button (top right of the 3D view, both editors) previews an item on other bodies: 8 skin tones, height/width/head scaling with Normal, Slender, Wide, Tall and Short presets, four sample outfits (to check an accessory against clothing) and sample hair or a beanie. Accessories follow the scaled body. It is preview only and is never exported.
+
 ## Accessory texture painting
 
-Pick the **Paint** tool (B) and drag on any part in the viewport. Brush size, hardness, opacity, eraser and recent colors are in the Properties panel. A painted part gets its own square texture (128, 256 or 512 px) on an unwrapped copy of the shape, so every face can be painted separately (round shapes keep their own UVs, cubes/cylinders/imports are box-unwrapped). The part's color and texture become the base layer under your strokes. Painted parts are included in GLB, glTF, OBJ and the merged texture atlas, and one stroke is one undo step.
+Pick the **Paint** tool (B) and drag on any part in the viewport. Brush size, hardness, opacity, eraser and recent colors are in the Properties panel. **Symmetry** (switch in the Paint section) mirrors the stroke across the accessory's centre line onto the matching left/right part, found by reflecting geometry (a centred part mirrors onto itself). One stroke is one undo step.
+
+A painted part gets its own square texture (128, 256 or 512 px) on an unwrapped copy of the shape, so every face can be painted separately (round shapes keep their own UVs, cubes/cylinders/imports are box-unwrapped). The part's color and texture become the base layer under your strokes. Painted parts are included in GLB, glTF, OBJ and the merged texture atlas, and one stroke is one undo step.
 
 ## Accessory export (Roblox-ready)
 
@@ -65,6 +74,7 @@ Pick the **Paint** tool (B) and drag on any part in the viewport. Brush size, ha
 
 - **Works offline** after the first visit (a small service worker caches the app's own files; it never touches other sites) and can be **installed** as an app where the browser supports it.
 - **Privacy and your data** (profile menu, or Privacy on the home screen): states plainly that nothing leaves the device, shows storage use, can ask the browser to keep your data, downloads a **backup of all projects** as a ZIP, and can **delete everything** (projects, settings, offline copy).
+- **Performance check** (Settings → Performance): measures GPU type, page frame rate, a full-design redraw and a soft brush move, then recommends Low, Medium or High quality. If the 3D view stays slow for several seconds the app offers to switch once per session. Nothing is sent anywhere.
 - **Tablets**: below 1100 px wide the right panel becomes a slide-over drawer, the bottom panel starts collapsed, the clothing editor shows one pane at a time, and the template supports two-finger pinch zoom. Phones below 720 px see a "works best on desktop" message with a Continue anyway button.
 
 ## Housekeeping
@@ -111,7 +121,7 @@ Conventions: Y up, 1 unit = 1 stud, the avatar and accessory front face **−Z**
 8. **Undo / redo & gizmos** — snapshot history with edit merging, transform controls that commit once per drag
 9. **Avatar preview** — R6 / R15 rigs, procedural animations, accessories following bones
 10. **Validation & export** — Roblox-oriented checks, GLB / glTF / OBJ writers, Roblox workflow notes
-11. **QA** — 69 unit tests, headless-browser run through create → edit → undo → save → reload → export, 1366×768 layout pass
+11. **QA** — About 90 unit tests, headless-browser run through create → edit → undo → save → reload → export, 1366×768 layout pass
 12. **Clothing studio** (v1.1) — template + UV mapping verified with labelled panels from four sides, layer renderer, 2D editor (move/scale/rotate/paint), 3D painting and place-on-model, presets, PNG export
 
 ## Layout
@@ -135,3 +145,4 @@ Accessories: Ctrl+Z undo · Ctrl+Y redo · Ctrl+S save · Delete delete · Ctrl+
 Clothing studio: Ctrl+Z/Y undo/redo · Ctrl+S save · Ctrl+D duplicate · Delete remove layer · V select · P place on model · B brush · E eraser · T text · Space+drag pan · scroll zoom
 13. **v1.2 polish** — clothing import, soft/symmetric brush, drag-reorder layers, documented R15 mapping, one-mesh + baked-atlas accessory export, attachment hints, triangle optimizer, guided tour, crash recovery, diagnostics
 14. **v1.3 polish** — fixed the 3D preview not following edits in split view, 30x faster painting, accessory texture painting, layered clothing starter, offline/PWA, privacy and data panel, tablet layout, GLB texture orientation fix, one undo step per stroke
+15. **v1.4** — clothing multi-select/history/pattern brushes/send-to, R15 calibration kit, layered clothing from a Roblox cage template, accessory symmetry painting, test-fit mode, performance check

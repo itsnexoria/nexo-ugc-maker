@@ -245,6 +245,8 @@ export interface Stroke {
   hardness?: number;
   /** stroke opacity 0..1 (default 1), applied to the whole stroke so overlaps do not build up */
   alpha?: number;
+  /** Non-solid brush fills. Pattern repeats across the template; gradient fades top to bottom over the stroke. */
+  fill?: { type: 'pattern'; pattern: PatternId; color2: string; size: number } | { type: 'gradient'; color2: string };
 }
 
 export interface PaintLayer extends ClothingLayerBase {
@@ -267,4 +269,6 @@ export interface ClothingData {
   designs: Record<ClothingKind, ClothingLayer[]>;
   images: ClothingImage[];
   activeKind: ClothingKind;
+  /** R15 segment split tuned after testing on a real avatar */
+  r15?: { torsoLower: number; limbUpper: number; limbLower: number };
 }

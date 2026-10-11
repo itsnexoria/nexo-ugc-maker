@@ -8,6 +8,8 @@ import { useViewport } from '../store/viewport';
 import type { AnimationId, RigType, Vec3 } from '../types';
 import { viewportApi } from './api';
 import { ClothingOverlay } from './ClothingOverlay';
+import { TestHeadwear, TestOutfit } from './TestFitParts';
+import { SKIN_TONES, useTestFit } from '../store/testfit';
 
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 
@@ -65,6 +67,11 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
   const select = useEditor((s) => s.selectAvatarPart);
   const isHead = def.name === 'Head';
   const selected = selectedPart === def.name;
+  const skinId = useTestFit((st) => st.skin);
+  const headScale = useTestFit((st) => st.head);
+  const skin = SKIN_TONES.find((t) => t.id === skinId)?.color ?? null;
+  const outfitOn = useTestFit((st) => st.outfit !== 'none') && !clothing;
+  const headwear = useTestFit((st) => st.headwear);
 
   useLayoutEffect(() => {
     const g = groupRef.current;
@@ -81,7 +88,7 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
   const radius = Math.min(0.1, Math.min(...def.size) * 0.2);
 
   return (
-    <group ref={groupRef} position={local}>
+    <group ref={groupRef} position={local} scale={isHead ? headScale : 1}>
       <group position={meshOffset}>
         <RoundedBox
           args={def.size}
@@ -95,7 +102,7 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
           }}
         >
           <meshStandardMaterial
-            color={AVATAR_TONES[def.tone]}
+            color={skin ?? AVATAR_TONES[def.tone]}
             roughness={0.62}
             metalness={0.02}
             emissive={selected ? '#e3242b' : '#000000'}
@@ -104,6 +111,8 @@ const Bone = memo(function Bone({ node, parentJoint, face, selectedPart, wirefra
           />
         </RoundedBox>
         {clothing && <ClothingOverlay bone={def.name} size={def.size} />}
+        {outfitOn && <TestOutfit bone={def.name} size={def.size} />}
+        {isHead && <TestHeadwear type={headwear} />}
         {isHead && face && (
           <mesh position={[0, 0, -(def.size[2] / 2 + 0.002)]} rotation={[0, Math.PI, 0]}>
             <planeGeometry args={[def.size[0] * 0.9, def.size[1] * 0.9]} />
@@ -186,6 +195,8 @@ export function Avatar() {
   const wireframe = useViewport((s) => s.wireframe);
   const lighting = useViewport((s) => s.lighting);
   const visible = useViewport((s) => s.showAvatar);
+  const fitHeight = useTestFit((s) => s.height);
+  const fitWidth = useTestFit((s) => s.width);
   const clothing = useEditor((s) => s.screen === 'clothing');
   const rootRef = useRef<THREE.Group>(null);
   const face = useMemo(() => makeFaceTexture(), []);
@@ -198,9 +209,15 @@ export function Avatar() {
     if (!root) return;
     for (const b of viewportApi.bones.values()) b.rotation.set(0, 0, 0);
     root.position.set(0, 0, 0);
+    // capture the rest pose at normal body size, so accessories can follow later scaling too
+    const keep = { s: root.scale.clone(), h: viewportApi.bones.get('Head')?.scale.clone() };
+    root.scale.set(1, 1, 1);
+    viewportApi.bones.get('Head')?.scale.set(1, 1, 1);
     root.updateMatrixWorld(true);
     viewportApi.restInverse.clear();
     for (const [name, b] of viewportApi.bones) viewportApi.restInverse.set(name, b.matrixWorld.clone().invert());
+    root.scale.copy(keep.s);
+    if (keep.h) viewportApi.bones.get('Head')?.scale.copy(keep.h);
   }, [rig]);
 
   useEffect(() => () => face?.dispose(), [face]);
@@ -212,7 +229,7 @@ export function Avatar() {
   }, -1);
 
   return (
-    <group ref={rootRef} visible={visible} key={rig}>
+    <group ref={rootRef} visible={visible} key={rig} scale={[fitWidth, fitHeight, fitWidth]}>
       {trees.map((n) => (
         <Bone key={n.def.name} node={n} parentJoint={rootJoint} face={face} selectedPart={selectedPart} wireframe={wireframe} lighting={lighting} clothing={clothing} />
       ))}

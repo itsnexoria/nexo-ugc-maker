@@ -21,6 +21,14 @@ import {
   Upload,
   Grid2x2,
   FileUp,
+  History as HistoryIcon,
+  Send,
+  AlignHorizontalJustifyCenter,
+  AlignHorizontalJustifyStart,
+  AlignHorizontalJustifyEnd,
+  AlignVerticalJustifyCenter,
+  AlignVerticalJustifyStart,
+  AlignVerticalJustifyEnd,
 } from 'lucide-react';
 import { ColorField, NumberField, SliderField } from '../components/ui/Fields';
 import { Section } from '../components/ui/Section';
@@ -28,6 +36,7 @@ import { Tip } from '../components/ui/Tooltip';
 import { importClothingTemplate, pickFiles, uploadClothingImage } from '../editor/importers';
 import { selectedLayer, useClothing, type ClothingTool } from '../store/clothing';
 import { useUI } from '../store/ui';
+import { translateClip } from '../store/clothing';
 import type { BlendMode, ClothingKind, ClothingLayer, PatternId, ShapeType } from '../types';
 import { FONTS, PATTERNS } from './layers';
 import { presetsFor } from './presets';
@@ -160,7 +169,7 @@ const TYPE_ICON: Record<ClothingLayer['type'], ReactNode> = {
 export function LayersList() {
   const kind = useClothing((s) => s.activeKind);
   const layers = useClothing((s) => s.designs[s.activeKind]);
-  const selectedId = useClothing((s) => s.selectedId);
+  const selectedIds = useClothing((s) => s.selectedIds);
   const select = useClothing((s) => s.select);
   const update = useClothing((s) => s.updateLayer);
   const move = useClothing((s) => s.moveLayer);
@@ -183,8 +192,13 @@ export function LayersList() {
       {[...layers].reverse().map((l) => (
         <li key={l.id}>
           <div
-            className={`lrow ${selectedId === l.id ? 'selected' : ''} ${!l.visible ? 'muted' : ''} ${drop?.id === l.id ? (drop.above ? 'drop-above' : 'drop-below') : ''} ${dragId === l.id ? 'dragging' : ''}`}
-            onClick={() => select(l.id)}
+            className={`lrow ${selectedIds.includes(l.id) ? 'selected' : ''} ${!l.visible ? 'muted' : ''} ${drop?.id === l.id ? (drop.above ? 'drop-above' : 'drop-below') : ''} ${dragId === l.id ? 'dragging' : ''}`}
+            onClick={(e) => {
+              const st = useClothing.getState();
+              if (e.shiftKey) st.selectRange(l.id);
+              else if (e.ctrlKey || e.metaKey) st.toggleSelect(l.id);
+              else select(l.id);
+            }}
             draggable={editing !== l.id}
             onDragStart={(e) => {
               e.dataTransfer.setData('text/nexo-layer', l.id);
@@ -283,8 +297,156 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+function MultiProperties() {
+  const kind = useClothing((s) => s.activeKind);
+  const ids = useClothing((s) => s.selectedIds);
+  const layers = useClothing((s) => s.designs[s.activeKind]);
+  const updateMany = useClothing((s) => s.updateLayers);
+  const removeMany = useClothing((s) => s.removeLayers);
+  const dupMany = useClothing((s) => s.duplicateLayers);
+  const align = useClothing((s) => s.alignLayers);
+  const sel = layers.filter((l) => ids.includes(l.id));
+  const movable = sel.filter((l) => l.type === 'image' || l.type === 'text' || l.type === 'shape').length;
+  const opts = clipOptions(kind);
+  const sameOpacity = sel.every((l) => l.opacity === sel[0].opacity) ? sel[0].opacity : 1;
+  const clip = sel.every((l) => l.clip === sel[0].clip) ? sel[0].clip : '';
+  const ALIGN = [
+    ['left', AlignHorizontalJustifyStart, 'Align left'],
+    ['center', AlignHorizontalJustifyCenter, 'Align centers horizontally'],
+    ['right', AlignHorizontalJustifyEnd, 'Align right'],
+    ['top', AlignVerticalJustifyStart, 'Align top'],
+    ['middle', AlignVerticalJustifyCenter, 'Align centers vertically'],
+    ['bottom', AlignVerticalJustifyEnd, 'Align bottom'],
+  ] as const;
+  return (
+    <Section title={`${sel.length} layers selected`}>
+      <p className="hint">Shift+click selects a range, Ctrl/Cmd+click adds or removes one, and dragging on empty template space draws a selection box. Drag any selected layer to move them together.</p>
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className="btn sm" onClick={() => updateMany(ids, { visible: sel.some((l) => !l.visible) })}>
+          {sel.some((l) => !l.visible) ? 'Show all' : 'Hide all'}
+        </button>
+        <button className="btn sm" onClick={() => updateMany(ids, { locked: !sel.every((l) => l.locked) })}>
+          {sel.every((l) => l.locked) ? 'Unlock all' : 'Lock all'}
+        </button>
+        <button className="btn sm" onClick={() => dupMany(ids)}>
+          <Copy size={13} /> Duplicate
+        </button>
+        <button className="btn sm danger" onClick={() => removeMany(ids)}>
+          <Trash2 size={13} /> Delete
+        </button>
+      </div>
+      <SliderField label="Opacity" value={sameOpacity} onChange={(v) => updateMany(ids, { opacity: v }, 'multi:opacity')} />
+      <Row label="Blend">
+        <select className="select" aria-label="Blend mode for all" defaultValue="" onChange={(e) => e.target.value && updateMany(ids, { blend: e.target.value as BlendMode })}>
+          <option value="">Keep each layer's</option>
+          <option value="normal">Normal</option>
+          <option value="multiply">Multiply</option>
+          <option value="screen">Screen</option>
+          <option value="overlay">Overlay</option>
+        </select>
+      </Row>
+      <div className="field">
+        <label htmlFor="multi-clip">Applies to</label>
+        <select id="multi-clip" className="select" value={clip} onChange={(e) => e.target.value && updateMany(ids, { clip: e.target.value })}>
+          {clip === '' && <option value="">Mixed</option>}
+          {opts.map((o) => (
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      {movable > 1 && (
+        <div className="row" style={{ flexWrap: 'wrap', gap: 2 }} role="group" aria-label="Align">
+          {ALIGN.map(([how, Icon, label]) => (
+            <Tip key={how} label={label}>
+              <button className="icon-btn boxed" aria-label={label} onClick={() => align(ids, how)}>
+                <Icon size={14} />
+              </button>
+            </Tip>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+export function SendToButton() {
+  const kind = useClothing((s) => s.activeKind);
+  const ids = useClothing((s) => s.selectedIds);
+  const copy = useClothing((s) => s.copyLayersToKind);
+  const setActive = useClothing((s) => s.setActiveKind);
+  const openMenu = useUI((s) => s.openContextMenu);
+  const toast = useUI((s) => s.toast);
+  const targets = (['shirt', 'pants'] as ClothingKind[]).filter((k) => k !== kind);
+  if (kind === 'tshirt') return null;
+  return (
+    <Tip label="Copy layers to the other item (arms become legs)">
+      <button
+        className="icon-btn sm"
+        aria-label="Send layers to another item"
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          const items = targets.flatMap((t) => [
+            {
+              label: ids.length ? `Copy ${ids.length} selected to ${TEMPLATES[t].label}` : `Select layers to copy to ${TEMPLATES[t].label}`,
+              disabled: !ids.length,
+              onClick: () => {
+                const n = copy(ids, t);
+                if (n) toast('success', `Copied ${n} layer${n === 1 ? '' : 's'} to ${TEMPLATES[t].label}. Sleeves became ${t === 'pants' ? 'legs' : 'sleeves'}.`, { label: `Open ${TEMPLATES[t].label}`, onClick: () => setActive(t) });
+              },
+            },
+            {
+              label: `Copy the whole ${TEMPLATES[kind].label.toLowerCase()} to ${TEMPLATES[t].label}`,
+              onClick: () => {
+                const n = copy('all', t);
+                if (n) toast('success', `Copied ${n} layer${n === 1 ? '' : 's'} to ${TEMPLATES[t].label}`, { label: `Open ${TEMPLATES[t].label}`, onClick: () => setActive(t) });
+              },
+            },
+          ]);
+          openMenu(r.left - 200, r.bottom + 4, items);
+        }}
+      >
+        <Send size={12} />
+      </button>
+    </Tip>
+  );
+}
+
+export function HistoryPanel() {
+  const past = useClothing((s) => s.past);
+  const future = useClothing((s) => s.future);
+  const jump = useClothing((s) => s.jumpHistory);
+  return (
+    <ol className="history" aria-label="Undo history">
+      <li>
+        <button className={`hrow ${past.length === 0 ? 'now' : ''}`} onClick={() => jump(-past.length)}>
+          <span className="faint num">0</span> Start
+        </button>
+      </li>
+      {past.map((e, i) => (
+        <li key={`p${i}`}>
+          {/* each entry stores the state BEFORE its action, so the state after action i is entry i+1 */}
+          <button className={`hrow ${i === past.length - 1 ? 'now' : ''}`} onClick={() => jump(-(past.length - 1 - i))}>
+            <span className="faint num">{i + 1}</span> {e.label}
+          </button>
+        </li>
+      ))}
+      {[...future].map((e, i) => (
+        <li key={`f${i}`}>
+          <button className="hrow ahead" onClick={() => jump(i + 1)} title="Redo to here">
+            <span className="faint num">{past.length + i + 1}</span> {e.label}
+          </button>
+        </li>
+      ))}
+      {past.length === 0 && future.length === 0 && <li className="hint" style={{ padding: '6px 12px' }}>No edits yet.</li>}
+    </ol>
+  );
+}
+
 export function LayerProperties() {
   const kind = useClothing((s) => s.activeKind);
+  const multi = useClothing((s) => s.selectedIds.length > 1);
   const layer = useClothing(selectedLayer);
   const images = useClothing((s) => s.images);
   const brush = useClothing((s) => s.brush);
@@ -317,9 +479,38 @@ export function LayerProperties() {
         <input type="checkbox" checked={brush.symmetry} aria-label="Symmetry painting" onChange={(e) => setBrush({ symmetry: e.target.checked })} />
         <span className="hint">Paint the left and right sides together</span>
       </Row>
+      {tool === 'brush' && (
+        <>
+          <Row label="Fill">
+            <select className="select" aria-label="Brush fill" value={brush.fillType} onChange={(e) => setBrush({ fillType: e.target.value as 'solid' | 'pattern' | 'gradient' })}>
+              <option value="solid">Solid color</option>
+              <option value="pattern">Pattern</option>
+              <option value="gradient">Gradient (top to bottom)</option>
+            </select>
+          </Row>
+          {brush.fillType !== 'solid' && <ColorField label="Color 2" value={brush.color2} onChange={(v) => setBrush({ color2: v })} />}
+          {brush.fillType === 'pattern' && (
+            <>
+              <Row label="Pattern">
+                <select className="select" aria-label="Brush pattern" value={brush.pattern} onChange={(e) => setBrush({ pattern: e.target.value as PatternId })}>
+                  {PATTERNS.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+              <SliderField label="Pattern size" value={brush.patternSize} min={2} max={40} step={1} precision={0} onChange={(v) => setBrush({ patternSize: v })} />
+            </>
+          )}
+          {brush.fillType !== 'solid' && <p className="hint">Pattern and gradient strokes have hard edges.</p>}
+        </>
+      )}
       <p className="hint">Drag on the template or straight on the 3D model. Alt+click on the template picks a color. Each stroke is one undo step.</p>
     </Section>
   );
+
+  if (multi) return <MultiProperties />;
 
   if (!layer) {
     return (

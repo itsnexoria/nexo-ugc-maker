@@ -16,7 +16,8 @@ interface View {
 
 type Drag =
   | { mode: 'pan'; sx: number; sy: number; vx: number; vy: number }
-  | { mode: 'move'; id: string; sx: number; sy: number; ox: number; oy: number }
+  | { mode: 'move'; ids: string[]; sx: number; sy: number; lx: number; ly: number }
+  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean }
   | { mode: 'scale'; id: string; cx: number; cy: number; d0: number; w: number; h: number; size: number }
   | { mode: 'rotate'; id: string; cx: number; cy: number; offset: number }
   | { mode: 'paint'; layerId: string; index: number; mirrorIndex: number | null };
@@ -55,10 +56,13 @@ export function DesignCanvas() {
   const imageRev = useClothing((s) => s.imageRev);
   const dv = useClothing((s) => s.designVersion[s.activeKind]);
   const selectedId = useClothing((s) => s.selectedId);
+  const selectedIds = useClothing((s) => s.selectedIds);
+  const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const tool = useClothing((s) => s.tool);
   const showGuides = useClothing((s) => s.showGuides);
   const spec = TEMPLATES[kind];
   const rig = useEditor((s) => s.rig);
+  const calKey = useClothing((s) => `${s.r15Cal.torsoLower}|${s.r15Cal.limbUpper}|${s.r15Cal.limbLower}`);
 
   const wrap = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -199,29 +203,46 @@ export function DesignCanvas() {
     ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.strokeRect(0, 0, spec.width, spec.height);
 
-    // selection
-    const sel = selectedLayer(useClothing.getState());
-    const box = sel && sel.visible ? layerBox(sel) : null;
-    if (box) {
-      const { corners, rot } = handlePoints({ ...box });
-      ctx.strokeStyle = '#ff3b44';
-      ctx.lineWidth = 1.5 / view.zoom;
-      ctx.beginPath();
-      corners.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
-      ctx.closePath();
-      ctx.stroke();
-      const top: [number, number] = [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2];
-      ctx.beginPath();
-      ctx.moveTo(top[0], top[1]);
-      ctx.lineTo(rot[0], rot[1]);
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      const hs = HANDLE / view.zoom;
-      for (const p of corners) ctx.fillRect(p[0] - hs / 2, p[1] - hs / 2, hs, hs);
-      ctx.fillStyle = '#ff3b44';
-      ctx.beginPath();
-      ctx.arc(rot[0], rot[1], hs * 0.7, 0, Math.PI * 2);
-      ctx.fill();
+    // selection: every selected layer gets an outline, only a single selection gets handles
+    {
+      const st = useClothing.getState();
+      const many = st.selectedIds.length > 1;
+      for (const id of st.selectedIds) {
+        const l = st.designs[st.activeKind].find((x) => x.id === id);
+        const box = l && l.visible ? layerBox(l) : null;
+        if (!box) continue;
+        const { corners, rot } = handlePoints({ ...box });
+        ctx.strokeStyle = many ? 'rgba(255,90,98,0.95)' : '#ff3b44';
+        ctx.lineWidth = 1.5 / view.zoom;
+        if (many) ctx.setLineDash([4 / view.zoom, 3 / view.zoom]);
+        ctx.beginPath();
+        corners.forEach((p, i) => (i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])));
+        ctx.closePath();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (many) continue;
+        const top: [number, number] = [(corners[0][0] + corners[1][0]) / 2, (corners[0][1] + corners[1][1]) / 2];
+        ctx.beginPath();
+        ctx.moveTo(top[0], top[1]);
+        ctx.lineTo(rot[0], rot[1]);
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        const hs = HANDLE / view.zoom;
+        for (const p of corners) ctx.fillRect(p[0] - hs / 2, p[1] - hs / 2, hs, hs);
+        ctx.fillStyle = '#ff3b44';
+        ctx.beginPath();
+        ctx.arc(rot[0], rot[1], hs * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (marquee) {
+        ctx.fillStyle = 'rgba(255,59,68,0.12)';
+        ctx.strokeStyle = 'rgba(255,90,98,0.9)';
+        ctx.lineWidth = 1 / view.zoom;
+        const mx = Math.min(marquee.x0, marquee.x1);
+        const my = Math.min(marquee.y0, marquee.y1);
+        ctx.fillRect(mx, my, Math.abs(marquee.x1 - marquee.x0), Math.abs(marquee.y1 - marquee.y0));
+        ctx.strokeRect(mx, my, Math.abs(marquee.x1 - marquee.x0), Math.abs(marquee.y1 - marquee.y0));
+      }
     }
 
     if ((tool === 'brush' || tool === 'eraser') && hover.current) {
@@ -233,7 +254,7 @@ export function DesignCanvas() {
       ctx.stroke();
     }
     ctx.restore();
-  }, [size, view, kind, revision, imageRev, dv, selectedId, tool, showGuides, spec, bump, rig]);
+  }, [size, view, kind, revision, imageRev, dv, selectedId, selectedIds, marquee, tool, showGuides, spec, bump, rig, calKey]);
 
   // ---------------------------------------------------------------- interaction
   const hitHandle = (layer: ClothingLayer, x: number, y: number): 'rotate' | 'scale' | null => {
@@ -285,7 +306,7 @@ export function DesignCanvas() {
     }
 
     const layers = s.designs[s.activeKind];
-    const sel = layers.find((l) => l.id === s.selectedId);
+    const sel = s.selectedIds.length === 1 ? layers.find((l) => l.id === s.selectedId) : undefined;
     if (sel && !sel.locked && sel.visible) {
       const h = hitHandle(sel, x, y);
       const box = layerBox(sel);
@@ -299,18 +320,26 @@ export function DesignCanvas() {
         return;
       }
     }
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
     // topmost movable layer under the pointer
     for (let i = layers.length - 1; i >= 0; i--) {
       const l = layers[i];
       if (!l.visible || l.locked) continue;
       const b = layerBox(l);
       if (b && pointInBox(b, x, y)) {
-        s.select(l.id);
-        drag.current = { mode: 'move', id: l.id, sx: x, sy: y, ox: b.cx, oy: b.cy };
+        if (additive) {
+          s.toggleSelect(l.id);
+          return;
+        }
+        // clicking something already in a multi-selection keeps the selection so the whole group can be dragged
+        if (!s.selectedIds.includes(l.id)) s.select(l.id);
+        const ids = useClothing.getState().selectedIds;
+        drag.current = { mode: 'move', ids, sx: x, sy: y, lx: x, ly: y };
         return;
       }
     }
-    s.select(null);
+    if (!additive) s.select(null);
+    drag.current = { mode: 'marquee', x0: x, y0: y, x1: x, y1: y, add: additive };
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -343,7 +372,15 @@ export function DesignCanvas() {
     if (d.mode === 'pan') {
       setView((v) => ({ ...v, x: d.vx + (e.clientX - d.sx), y: d.vy + (e.clientY - d.sy) }));
     } else if (d.mode === 'move') {
-      s.updateLayer(d.id, { x: d.ox + (x - d.sx), y: d.oy + (y - d.sy) } as Partial<ClothingLayer>, `${d.id}:drag`);
+      const dx = x - d.lx;
+      const dy = y - d.ly;
+      d.lx = x;
+      d.ly = y;
+      if (dx !== 0 || dy !== 0) s.moveLayersBy(d.ids, dx, dy, `${d.ids.join(',')}:drag`);
+    } else if (d.mode === 'marquee') {
+      d.x1 = x;
+      d.y1 = y;
+      setMarquee({ x0: d.x0, y0: d.y0, x1: x, y1: y });
     } else if (d.mode === 'scale') {
       const k = Math.max(0.05, Math.hypot(x - d.cx, y - d.cy) / d.d0);
       const layer = s.designs[s.activeKind].find((l) => l.id === d.id);
@@ -364,6 +401,22 @@ export function DesignCanvas() {
     touches.current.delete(e.pointerId);
     if (touches.current.size < 2) pinch.current = null;
     if (drag.current?.mode === 'paint') flushStroke();
+    const dm = drag.current;
+    if (dm?.mode === 'marquee') {
+      const st = useClothing.getState();
+      const x0 = Math.min(dm.x0, dm.x1);
+      const x1 = Math.max(dm.x0, dm.x1);
+      const y0 = Math.min(dm.y0, dm.y1);
+      const y1 = Math.max(dm.y0, dm.y1);
+      if (x1 - x0 > 3 || y1 - y0 > 3) {
+        const hit = st.designs[st.activeKind].filter((l) => {
+          const b = l.visible && !l.locked ? layerBox(l) : null;
+          return !!b && b.cx + b.w / 2 >= x0 && b.cx - b.w / 2 <= x1 && b.cy + b.h / 2 >= y0 && b.cy - b.h / 2 <= y1;
+        });
+        st.selectMany(dm.add ? [...new Set([...st.selectedIds, ...hit.map((l) => l.id)])] : hit.map((l) => l.id));
+      }
+      setMarquee(null);
+    }
     drag.current = null;
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   };

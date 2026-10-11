@@ -16,6 +16,7 @@ python3 tests/e2e/layered-export.py
 python3 tests/e2e/glb-texture-orientation.py  # regression: exported UVs must sample the right texel
 python3 tests/e2e/offline-and-tablet.py
 python3 tests/e2e/privacy-and-touch.py
+python3 tests/e2e/new-features.py             # multi-select, history, R15 fit, template import, perf check, symmetry
 ```
 
 Each script prints what it checked. They are checks, not strict pass/fail suites: read the output.

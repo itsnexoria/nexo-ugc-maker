@@ -22,25 +22,52 @@ const R6_PARTS: Record<string, PartId> = {
 type Chain = { part: PartId; bones: string[]; /** share of the 128 px panel height per bone, bottom first */ shares: number[] };
 
 /**
- * Limb panels are split 64 px upper / 48 px lower / 16 px hand or foot, following the
- * R15 guidance on the Roblox DevForum ("Classic Clothing UV Mapping Guidelines [R15]").
- * The torso split follows the segment heights (LowerTorso 0.4 of 2.0 studs). Roblox does not
- * publish the exact torso line, so treat that one as an approximation.
+ * Where R15 segments meet on the classic template. The limb split (64 px upper / 48 px lower / the rest
+ * for hand or foot) comes from Roblox's R15 guidance on the DevForum; Roblox does not publish the torso
+ * line, so the lower-torso share is an estimate. All three can be adjusted after testing on a real avatar.
  */
-export const R15_LIMB_SHARES = [16 / 128, 48 / 128, 64 / 128];
-export const R15_TORSO_SHARES = [0.2, 0.8];
+export interface R15Calibration {
+  /** lower torso as a share of the torso panel height */
+  torsoLower: number;
+  /** upper arm/leg height in template px (of 128) */
+  limbUpper: number;
+  /** lower arm/leg height in template px (of 128) */
+  limbLower: number;
+}
 
-const R15_CHAINS: Chain[] = [
-  { part: 'torso', bones: ['LowerTorso', 'UpperTorso'], shares: R15_TORSO_SHARES },
-  { part: 'rightArm', bones: ['RightHand', 'RightLowerArm', 'RightUpperArm'], shares: R15_LIMB_SHARES },
-  { part: 'leftArm', bones: ['LeftHand', 'LeftLowerArm', 'LeftUpperArm'], shares: R15_LIMB_SHARES },
-  { part: 'rightLeg', bones: ['RightFoot', 'RightLowerLeg', 'RightUpperLeg'], shares: R15_LIMB_SHARES },
-  { part: 'leftLeg', bones: ['LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg'], shares: R15_LIMB_SHARES },
-];
+export const R15_DEFAULTS: R15Calibration = { torsoLower: 0.2, limbUpper: 64, limbLower: 48 };
+let cal: R15Calibration = { ...R15_DEFAULTS };
+
+export function getR15Calibration(): R15Calibration {
+  return cal;
+}
+
+export function setR15Calibration(patch: Partial<R15Calibration>): R15Calibration {
+  const next = { ...cal, ...patch };
+  next.torsoLower = Math.min(0.5, Math.max(0.05, next.torsoLower));
+  next.limbUpper = Math.min(100, Math.max(30, Math.round(next.limbUpper)));
+  next.limbLower = Math.min(120 - next.limbUpper > 20 ? 120 - next.limbUpper : 20, Math.max(16, Math.round(next.limbLower)));
+  cal = next;
+  return cal;
+}
+
+const limbShares = () => [Math.max(0, 128 - cal.limbUpper - cal.limbLower) / 128, cal.limbLower / 128, cal.limbUpper / 128];
+const torsoShares = () => [cal.torsoLower, 1 - cal.torsoLower];
+
+function chains(): Chain[] {
+  const l = limbShares();
+  return [
+    { part: 'torso', bones: ['LowerTorso', 'UpperTorso'], shares: torsoShares() },
+    { part: 'rightArm', bones: ['RightHand', 'RightLowerArm', 'RightUpperArm'], shares: l },
+    { part: 'leftArm', bones: ['LeftHand', 'LeftLowerArm', 'LeftUpperArm'], shares: l },
+    { part: 'rightLeg', bones: ['RightFoot', 'RightLowerLeg', 'RightUpperLeg'], shares: l },
+    { part: 'leftLeg', bones: ['LeftFoot', 'LeftLowerLeg', 'LeftUpperLeg'], shares: l },
+  ];
+}
 
 /** Joint lines (template px from the panel top) where R15 segments meet, for the 2D guides. */
 export function r15JointOffsets(part: PartId): number[] {
-  const shares = part === 'torso' ? R15_TORSO_SHARES : R15_LIMB_SHARES;
+  const shares = part === 'torso' ? torsoShares() : limbShares();
   const out: number[] = [];
   let below = 0;
   for (let i = 0; i < shares.length - 1; i++) {
@@ -56,7 +83,7 @@ export function bodyMapFor(rig: RigType, bone: string): BodyMap | null {
     const part = R6_PARTS[bone];
     return part ? { part, slice: [0, 1], top: true, bottom: true } : null;
   }
-  for (const chain of R15_CHAINS) {
+  for (const chain of chains()) {
     const idx = chain.bones.indexOf(bone);
     if (idx < 0) continue;
     const below = chain.shares.slice(0, idx).reduce((a, b) => a + b, 0);

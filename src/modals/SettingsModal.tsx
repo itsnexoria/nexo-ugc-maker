@@ -3,6 +3,8 @@ import { Modal } from '../components/ui/Overlays';
 import { SliderField, SwitchRow, NumberField } from '../components/ui/Fields';
 import { applyTheme, useSettings, type Quality, type ThemeId } from '../store/settings';
 import { useUI } from '../store/ui';
+import { formatPerfReport, runPerfCheck, type PerfReport } from '../utils/perf';
+import { copyText } from '../utils/diagnostics';
 
 type Tab = 'editor' | 'viewport' | 'performance';
 
@@ -22,6 +24,9 @@ export function SettingsModal() {
   const close = useUI((s) => s.closeModal);
   const st = useSettings();
   const [tab, setTab] = useState<Tab>('editor');
+  const [perf, setPerf] = useState<PerfReport | null>(null);
+  const [running, setRunning] = useState(false);
+  const toast = useUI((s) => s.toast);
 
   return (
     <Modal
@@ -119,6 +124,53 @@ export function SettingsModal() {
             ))}
           </div>
           <span className="hint">Changing quality restarts the viewport, which keeps your project and camera.</span>
+
+          <div className="perf-box">
+            <div className="row">
+              <strong className="grow">Check this device</strong>
+              <button
+                className="btn sm"
+                disabled={running}
+                onClick={async () => {
+                  setRunning(true);
+                  try {
+                    setPerf(await runPerfCheck());
+                  } finally {
+                    setRunning(false);
+                  }
+                }}
+              >
+                {running ? 'Measuring…' : perf ? 'Run again' : 'Run performance check'}
+              </button>
+            </div>
+            <p className="hint">Takes about two seconds. Keep this window in front while it runs. Nothing is sent anywhere.</p>
+            {perf && (
+              <>
+                <table className="grid-table plain">
+                  <tbody>
+                    <tr><td className="dim">Graphics</td><td>{perf.gpu}{perf.software ? ' (software emulated)' : ''}</td></tr>
+                    <tr><td className="dim">Page frame rate</td><td className="num">{perf.fps.toFixed(0)} fps</td></tr>
+                    <tr><td className="dim">Redraw a full design</td><td className="num">{perf.compositeMs.toFixed(1)} ms</td></tr>
+                    <tr><td className="dim">Soft brush move</td><td className="num">{perf.brushMs.toFixed(1)} ms</td></tr>
+                    <tr><td className="dim">Cores / memory</td><td className="num">{perf.cores ?? '?'} / {perf.memoryGb ? `${perf.memoryGb} GB` : '?'}</td></tr>
+                  </tbody>
+                </table>
+                <div className="alert" style={{ borderColor: perf.recommended === 'low' ? 'var(--warn)' : 'var(--ok)' }}>
+                  <span>
+                    Recommended: <strong>{perf.recommended[0].toUpperCase() + perf.recommended.slice(1)}</strong> quality. {perf.reasons.join(' ')}
+                  </span>
+                </div>
+                <div className="row">
+                  <button className="btn sm primary" disabled={st.quality === perf.recommended} onClick={() => st.set('quality', perf.recommended)}>
+                    {st.quality === perf.recommended ? 'Already using it' : `Use ${perf.recommended}`}
+                  </button>
+                  <button className="btn sm" onClick={async () => toast((await copyText(formatPerfReport(perf))) ? 'success' : 'warn', 'Report copied')}>
+                    Copy report
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </Modal>

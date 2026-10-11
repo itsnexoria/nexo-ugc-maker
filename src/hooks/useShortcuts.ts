@@ -35,13 +35,18 @@ function handleClothingKey(e: KeyboardEvent) {
   }
   if (mod && key === 'd') {
     e.preventDefault();
-    if (cl.selectedId) cl.duplicateLayer(cl.selectedId);
+    if (cl.selectedIds.length) cl.duplicateLayers(cl.selectedIds);
+    return;
+  }
+  if (mod && key === 'a') {
+    e.preventDefault();
+    cl.selectMany(cl.designs[cl.activeKind].filter((l) => !l.locked).map((l) => l.id));
     return;
   }
   if (mod || e.altKey) return;
-  if ((e.key === 'Delete' || e.key === 'Backspace') && cl.selectedId) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && cl.selectedIds.length) {
     e.preventDefault();
-    cl.removeLayer(cl.selectedId);
+    cl.removeLayers(cl.selectedIds);
     return;
   }
   if (e.key === 'Escape') {

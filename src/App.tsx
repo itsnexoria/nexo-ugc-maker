@@ -12,6 +12,7 @@ import { ClothingWorkspace } from './clothing/ClothingEditor';
 import { NewProjectModal, OpenProjectModal } from './modals/ProjectModals';
 import { AboutModal, ShortcutsModal } from './modals/InfoModals';
 import { PrivacyModal } from './modals/PrivacyModal';
+import { R15FitModal } from './modals/R15FitModal';
 import { SettingsModal } from './modals/SettingsModal';
 import { BrandMark } from './components/Brand';
 import { useShortcuts } from './hooks/useShortcuts';
@@ -148,6 +149,7 @@ export default function App() {
       {modal === 'shortcuts' && <ShortcutsModal />}
       {modal === 'about' && <AboutModal />}
       {modal === 'privacy' && <PrivacyModal />}
+      {modal === 'r15' && <R15FitModal />}
       <Tour />
       <ConfirmHost />
       <PromptHost />

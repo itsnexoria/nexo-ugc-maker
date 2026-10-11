@@ -9,7 +9,9 @@ import { useViewport } from '../store/viewport';
 import { DEG } from '../utils/math';
 import { getModelGeometry, getPaintGeometry, getPrimitiveGeometry } from '../utils/geometry';
 import { paintCanvasFor, usePaintRev } from '../utils/paint';
+import { findMirrorPartner, mirrorPaintHit } from '../utils/mirrorPaint';
 import { usePaintBrush } from '../store/paintBrush';
+import { isFitActive, useTestFit } from '../store/testfit';
 import type { SceneObject, SlotId } from '../types';
 import { viewportApi } from './api';
 import { applyTextureTransform, loadBaseTexture } from './textures';
@@ -27,7 +29,8 @@ function Follower({ slot, children }: { slot?: SlotId; children: ReactNode }) {
     const g = ref.current;
     if (!g) return;
     const rig = useEditor.getState().rig;
-    const animating = useEditor.getState().animation !== 'rest';
+    const fit = useTestFit.getState();
+    const animating = useEditor.getState().animation !== 'rest' || isFitActive(fit);
     const boneName = slot ? SLOT_BONE[rig][slot] : null;
     const bone = boneName ? viewportApi.bones.get(boneName) : null;
     const inv = boneName ? viewportApi.restInverse.get(boneName) : null;
@@ -143,51 +146,86 @@ export function useObjectMaterial(obj: SceneObject): THREE.MeshStandardMaterial 
 }
 
 // ---- painting directly on a part (pointer events give the exact texture coordinate under the cursor)
-let paintStroke: { id: string; index: number; res: number } | null = null;
-let pendingPts: [number, number][] = [];
+interface Target {
+  id: string;
+  index: number;
+  res: number;
+  mirror: boolean;
+}
+let paintTargets: Target[] = [];
+let paintSource = '';
+let pendingPts = new Map<number, [number, number][]>();
 let paintRaf = 0;
 
 function flushPaint(): void {
   if (paintRaf) cancelAnimationFrame(paintRaf);
   paintRaf = 0;
-  if (paintStroke && pendingPts.length) useEditor.getState().extendPaintStroke(paintStroke.id, paintStroke.index, pendingPts);
-  pendingPts = [];
+  const items = paintTargets.map((t, i) => ({ id: t.id, index: t.index, points: pendingPts.get(i) ?? [] })).filter((x) => x.points.length);
+  if (items.length) useEditor.getState().extendPaintStrokes(items);
+  pendingPts = new Map();
 }
 
-function uvPoint(e: ThreeEvent<PointerEvent>, res: number): [number, number] | null {
-  if (!e.uv) return null;
-  return [e.uv.x * res, (1 - e.uv.y) * res];
+function toPx(u: number, v: number, res: number): [number, number] {
+  return [u * res, (1 - v) * res];
+}
+
+function mirroredPoint(e: ThreeEvent<PointerEvent>, t: Target): [number, number] | null {
+  const ed = useEditor.getState();
+  const hit = mirrorPaintHit(ed.objects, ed.models, paintSource, t.id, e.point);
+  // ignore reflections that land far from the partner's surface (e.g. the twin is missing)
+  return hit && hit.distance < 0.6 ? toPx(hit.u, hit.v, t.res) : null;
 }
 
 function beginPaint(e: ThreeEvent<PointerEvent>, id: string): void {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || !e.uv) return;
   const ed = useEditor.getState();
+  const brush = usePaintBrush.getState();
   const res = ed.objects[id]?.paint?.res ?? 256;
-  const pt = uvPoint(e, res);
-  if (!pt) return;
   e.stopPropagation();
   if (viewportApi.controls) viewportApi.controls.enabled = false;
   (e.target as Element).setPointerCapture?.(e.pointerId);
-  const brush = usePaintBrush.getState();
   ed.select(id);
-  const index = ed.beginPaintStroke(id, { color: brush.color, size: Math.max(1, (brush.sizePct / 100) * res), erase: brush.erase, hardness: brush.hardness, alpha: brush.opacity, points: [pt] });
-  if (index < 0) return;
+  const mk = (r: number, pt: [number, number]) => ({ color: brush.color, size: Math.max(1, (brush.sizePct / 100) * r), erase: brush.erase, hardness: brush.hardness, alpha: brush.opacity, points: [pt] });
+  const items = [{ id, stroke: mk(res, toPx(e.uv.x, e.uv.y, res)) }];
+  paintSource = id;
+  let partner: string | null = null;
+  if (brush.symmetry) {
+    partner = findMirrorPartner(ed.objects, id);
+    if (partner) {
+      const pres = ed.objects[partner]?.paint?.res ?? 256;
+      const hit = mirrorPaintHit(ed.objects, ed.models, id, partner, e.point);
+      if (hit && hit.distance < 0.6) items.push({ id: partner, stroke: mk(pres, toPx(hit.u, hit.v, pres)) });
+    } else {
+      useUI.getState().toast('info', 'No matching left/right part found for symmetry, so only this part is painted.');
+    }
+  }
+  const idx = ed.beginPaintStrokes(items);
+  if (idx[0] < 0) return;
   if (!brush.erase) brush.use(brush.color);
-  paintStroke = { id, index, res: useEditor.getState().objects[id]?.paint?.res ?? res };
+  const after = useEditor.getState().objects;
+  paintTargets = items.map((it, i) => ({ id: it.id, index: idx[i], res: after[it.id]?.paint?.res ?? 256, mirror: i > 0 })).filter((t) => t.index >= 0);
+  pendingPts = new Map();
 }
 
 function movePaint(e: ThreeEvent<PointerEvent>, id: string): void {
-  if (!paintStroke || paintStroke.id !== id) return;
-  const pt = uvPoint(e, paintStroke.res);
-  if (!pt) return;
-  pendingPts.push(pt);
+  if (!paintTargets.length || paintTargets[0].id !== id || !e.uv) return;
+  const push = (i: number, pt: [number, number] | null) => {
+    if (!pt) return;
+    const list = pendingPts.get(i) ?? [];
+    list.push(pt);
+    pendingPts.set(i, list);
+  };
+  push(0, toPx(e.uv.x, e.uv.y, paintTargets[0].res));
+  paintTargets.forEach((t, i) => {
+    if (t.mirror) push(i, mirroredPoint(e, t));
+  });
   if (!paintRaf) paintRaf = requestAnimationFrame(flushPaint);
 }
 
 function endPaint(e: ThreeEvent<PointerEvent>): void {
-  if (!paintStroke) return;
+  if (!paintTargets.length) return;
   flushPaint();
-  paintStroke = null;
+  paintTargets = [];
   if (viewportApi.controls) viewportApi.controls.enabled = true;
   (e.target as Element).releasePointerCapture?.(e.pointerId);
 }

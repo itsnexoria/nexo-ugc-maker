@@ -6,6 +6,7 @@ import { CAMERA_TARGET, CAMERA_VIEWS, DEFAULT_CAMERA, useViewport, type CameraVi
 import { useValidation } from '../hooks/useValidation';
 import type { AnimationId } from '../types';
 import { Tip } from './ui/Tooltip';
+import { TestFitButton } from './TestFitPanel';
 
 const ANIMS: { id: AnimationId; label: string }[] = [
   { id: 'rest', label: 'Rest' },
@@ -64,6 +65,7 @@ export function ViewportOverlay() {
 
       {!preview && (
         <div className="vp-tr">
+          <TestFitButton />
           <Tip label="Grid" shortcut="G" side="bottom">
             <button className={`icon-btn boxed ${showGrid ? 'active' : ''}`} aria-pressed={showGrid} aria-label="Toggle grid" onClick={() => setSetting('showGrid', !showGrid)}>
               <Grid3x3 size={14} />

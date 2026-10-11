@@ -235,6 +235,13 @@ function PaintSection({ obj }: { obj: SceneObject | undefined }) {
         <span className="slider-label">Eraser</span>
         <Switch checked={brush.erase} onChange={(v) => brush.set({ erase: v })} label="Eraser" />
       </div>
+      <div className="slider-row" style={{ gridTemplateColumns: '72px 1fr' }}>
+        <span className="slider-label">Symmetry</span>
+        <div className="row">
+          <Switch checked={brush.symmetry} onChange={(v) => brush.set({ symmetry: v })} label="Symmetry painting" />
+          <span className="hint">Mirror left/right across the accessory's centre</span>
+        </div>
+      </div>
       {canPaint ? (
         <>
           <div className="slider-row" style={{ gridTemplateColumns: '72px 1fr' }}>

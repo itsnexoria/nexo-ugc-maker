@@ -1,7 +1,9 @@
 import { create } from 'zustand';
-import type { ClothingData, ClothingImage, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, ShapeLayer, Stroke, TextLayer } from '../types';
+import type { ClothingData, ClothingImage, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, PatternId, ShapeLayer, Stroke, TextLayer } from '../types';
 import { makeLayer, type NewLayerType } from '../clothing/layers';
 import { TEMPLATES, mirrorGroupId, mirrorPanelId, panelAt, panelById } from '../clothing/templates';
+import { layerBox } from '../clothing/render';
+import { R15_DEFAULTS, getR15Calibration, setR15Calibration, type R15Calibration } from '../clothing/mapping';
 import { useEditor } from './editor';
 import { useUI } from './ui';
 
@@ -17,6 +19,17 @@ export interface BrushState {
   hardness: number;
   opacity: number;
   symmetry: boolean;
+  /** solid colour, repeating pattern, or a gradient from colour to colour2 */
+  fillType: 'solid' | 'pattern' | 'gradient';
+  color2: string;
+  pattern: PatternId;
+  patternSize: number;
+}
+
+export interface HistoryEntry {
+  designs: Designs;
+  /** what the action that followed this state was */
+  label: string;
 }
 
 /** Where a point lands on the opposite side of the body (left/right mirror), or null off-template. */
@@ -37,9 +50,13 @@ export interface ClothingState {
   images: ClothingImage[];
   activeKind: ClothingKind;
   selectedId: string | null;
+  /** every selected layer (selectedId is the primary one shown in Properties) */
+  selectedIds: string[];
   tool: ClothingTool;
   brush: BrushState;
   recentColors: string[];
+  r15Cal: R15Calibration;
+  setR15Cal: (patch: Partial<R15Calibration> | 'reset') => void;
   showGuides: boolean;
   /** Extra thickness (studs) added to the clothing on the 3D preview to imitate puffy layered clothing. 0 = off. */
   puffiness: number;
@@ -52,8 +69,8 @@ export interface ClothingState {
   /** bumped per kind so only the edited design re-renders */
   designVersion: Record<ClothingKind, number>;
 
-  past: Designs[];
-  future: Designs[];
+  past: HistoryEntry[];
+  future: HistoryEntry[];
   lastKey: string | null;
   lastTime: number;
 
@@ -61,6 +78,9 @@ export interface ClothingState {
   serialize: () => ClothingData;
   setActiveKind: (k: ClothingKind) => void;
   select: (id: string | null) => void;
+  toggleSelect: (id: string) => void;
+  selectRange: (id: string) => void;
+  selectMany: (ids: string[]) => void;
   setTool: (t: ClothingTool) => void;
   setBrush: (patch: Partial<BrushState>) => void;
   setShowGuides: (v: boolean) => void;
@@ -74,6 +94,13 @@ export interface ClothingState {
   updateLayer: (id: string, patch: Partial<ClothingLayer>, key?: string) => void;
   removeLayer: (id: string) => void;
   duplicateLayer: (id: string) => string | null;
+  removeLayers: (ids: string[]) => void;
+  duplicateLayers: (ids: string[]) => void;
+  updateLayers: (ids: string[], patch: Partial<ClothingLayer>, key?: string) => void;
+  moveLayersBy: (ids: string[], dx: number, dy: number, key?: string) => void;
+  alignLayers: (ids: string[], how: 'left' | 'center' | 'right' | 'top' | 'middle' | 'bottom') => void;
+  copyLayersToKind: (ids: string[] | 'all', target: ClothingKind) => number;
+  jumpHistory: (steps: number) => void;
   mirrorLayer: (id: string) => string | null;
   moveLayer: (id: string, delta: number) => void;
   reorderLayer: (id: string, toIndex: number) => void;
@@ -91,6 +118,23 @@ export interface ClothingState {
   redo: () => void;
 }
 
+/** Clothing parts differ between a shirt (arms) and pants (legs); everything else lines up one to one. */
+export function translateClip(clip: string, from: ClothingKind, to: ClothingKind): string {
+  if (from === to) return clip;
+  const swap = (part: string) => {
+    if (from === 'shirt' && to === 'pants') return part.replace('rightArm', 'rightLeg').replace('leftArm', 'leftLeg');
+    if (from === 'pants' && to === 'shirt') return part.replace('rightLeg', 'rightArm').replace('leftLeg', 'leftArm');
+    return part;
+  };
+  return swap(clip);
+}
+
+function keepSelection(s: ClothingState, designs: Designs) {
+  const all = new Set(Object.values(designs).flatMap((arr) => arr.map((l) => l.id)));
+  const ids = s.selectedIds.filter((id) => all.has(id));
+  return { selectedIds: ids, selectedId: s.selectedId && all.has(s.selectedId) ? s.selectedId : (ids[ids.length - 1] ?? null) };
+}
+
 export const useClothing = create<ClothingState>((set, get) => {
   const touch = () => useEditor.getState().touch();
 
@@ -98,7 +142,7 @@ export const useClothing = create<ClothingState>((set, get) => {
     const s = get();
     const now = Date.now();
     const merge = !!key && s.lastKey === key && now - s.lastTime < MERGE_WINDOW_MS && s.past.length > 0;
-    const past = merge ? s.past : [...s.past, s.designs].slice(-HISTORY_LIMIT);
+    const past = merge ? s.past : [...s.past, { designs: s.designs, label }].slice(-HISTORY_LIMIT);
     const designVersion = { ...s.designVersion };
     for (const k of kinds) designVersion[k] = s.designVersion[k] + 1;
     set({ designs, past, future: [], lastKey: key ?? null, lastTime: now, revision: s.revision + 1, designVersion });
@@ -119,9 +163,11 @@ export const useClothing = create<ClothingState>((set, get) => {
     images: [],
     activeKind: 'shirt',
     selectedId: null,
+    selectedIds: [],
     tool: 'select',
-    brush: { color: '#e3242b', size: 6, hardness: 1, opacity: 1, symmetry: false },
+    brush: { color: '#e3242b', size: 6, hardness: 1, opacity: 1, symmetry: false, fillType: 'solid', color2: '#16171b', pattern: 'stripes', patternSize: 6 },
     recentColors: [],
+    r15Cal: { ...R15_DEFAULTS },
     showGuides: true,
     puffiness: 0,
     viewMode: 'split',
@@ -134,12 +180,20 @@ export const useClothing = create<ClothingState>((set, get) => {
     lastKey: null,
     lastTime: 0,
 
-    load: (data) =>
-      set((s) => ({
+    setR15Cal: (patch) => {
+      const next = setR15Calibration(patch === 'reset' ? { ...R15_DEFAULTS } : patch);
+      set((s) => ({ r15Cal: { ...next }, revision: s.revision + 1 }));
+      useEditor.getState().touch();
+    },
+
+    load: (data) => {
+      setR15Calibration(data.r15 ?? { ...R15_DEFAULTS });
+      set((s) => ({ r15Cal: { ...getR15Calibration() },
         designs: { shirt: data.designs?.shirt ?? [], pants: data.designs?.pants ?? [], tshirt: data.designs?.tshirt ?? [] },
         images: data.images ?? [],
         activeKind: data.activeKind ?? 'shirt',
         selectedId: null,
+        selectedIds: [],
         tool: 'select',
         past: [],
         future: [],
@@ -147,15 +201,34 @@ export const useClothing = create<ClothingState>((set, get) => {
         revision: s.revision + 1,
         imageRev: s.imageRev + 1,
         designVersion: { shirt: s.designVersion.shirt + 1, pants: s.designVersion.pants + 1, tshirt: s.designVersion.tshirt + 1 },
-      })),
+      }));
+    },
 
     serialize: () => {
       const s = get();
-      return { version: 1, designs: s.designs, images: s.images, activeKind: s.activeKind };
+      const r15 = getR15Calibration();
+      const isDefault = r15.torsoLower === R15_DEFAULTS.torsoLower && r15.limbUpper === R15_DEFAULTS.limbUpper && r15.limbLower === R15_DEFAULTS.limbLower;
+      return { version: 1, designs: s.designs, images: s.images, activeKind: s.activeKind, ...(isDefault ? {} : { r15: { ...r15 } }) };
     },
 
-    setActiveKind: (activeKind) => set({ activeKind, selectedId: null, tool: 'select' }),
-    select: (selectedId) => set({ selectedId }),
+    setActiveKind: (activeKind) => set({ activeKind, selectedId: null, selectedIds: [], tool: 'select' }),
+    select: (selectedId) => set({ selectedId, selectedIds: selectedId ? [selectedId] : [] }),
+    toggleSelect: (id) =>
+      set((s) => {
+        const has = s.selectedIds.includes(id);
+        const ids = has ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id];
+        return { selectedIds: ids, selectedId: has ? (ids[ids.length - 1] ?? null) : id };
+      }),
+    selectRange: (id) =>
+      set((s) => {
+        const layers = s.designs[s.activeKind];
+        const a = layers.findIndex((l) => l.id === (s.selectedId ?? id));
+        const b = layers.findIndex((l) => l.id === id);
+        if (a < 0 || b < 0) return { selectedId: id, selectedIds: [id] };
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        return { selectedIds: layers.slice(lo, hi + 1).map((l) => l.id), selectedId: id };
+      }),
+    selectMany: (ids) => set({ selectedIds: ids, selectedId: ids[ids.length - 1] ?? null }),
     setTool: (tool) => set({ tool }),
     setBrush: (patch) => set((s) => ({ brush: { ...s.brush, ...patch } })),
     setShowGuides: (showGuides) => set({ showGuides }),
@@ -189,7 +262,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       };
       // goes to the bottom of the stack so everything you add sits on top of it
       commit(`Imported ${spec.label.toLowerCase()} image`, withLayers(kind, [layer, ...s.designs[kind]]), undefined, [kind]);
-      set({ selectedId: layer.id });
+      set({ selectedId: layer.id, selectedIds: [layer.id] });
       return layer.id;
     },
 
@@ -197,7 +270,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       const s = get();
       const layer = makeLayer(s.activeKind, type, opts?.clip, opts?.image);
       commit(`Added ${type} layer`, withLayers(s.activeKind, [...s.designs[s.activeKind], layer]), undefined, [s.activeKind]);
-      set({ selectedId: layer.id });
+      set({ selectedId: layer.id, selectedIds: [layer.id] });
       return layer.id;
     },
 
@@ -205,15 +278,16 @@ export const useClothing = create<ClothingState>((set, get) => {
       const s = get();
       const next = replace ? layers : [...s.designs[s.activeKind], ...layers];
       commit(replace ? 'Applied preset' : 'Added preset layers', withLayers(s.activeKind, next), undefined, [s.activeKind]);
-      set({ selectedId: layers[layers.length - 1]?.id ?? null });
+      set({ selectedId: layers[layers.length - 1]?.id ?? null, selectedIds: layers.length ? [layers[layers.length - 1].id] : [] });
     },
 
     updateLayer: (id, patch, key) => {
       const kind = findKind(id);
       if (!kind) return;
       const s = get();
+      const cur = s.designs[kind].find((l) => l.id === id);
       const layers = s.designs[kind].map((l) => (l.id === id ? ({ ...l, ...patch } as ClothingLayer) : l));
-      commit('Edited layer', withLayers(kind, layers), key ?? `${id}:edit`, [kind]);
+      commit(`Edited ${cur?.name ?? 'layer'}`, withLayers(kind, layers), key ?? `${id}:edit`, [kind]);
     },
 
     removeLayer: (id) => {
@@ -223,6 +297,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       const layer = s.designs[kind].find((l) => l.id === id);
       commit(`Deleted ${layer?.name ?? 'layer'}`, withLayers(kind, s.designs[kind].filter((l) => l.id !== id)), undefined, [kind]);
       if (s.selectedId === id) set({ selectedId: null });
+      set((st) => ({ selectedIds: st.selectedIds.filter((x) => x !== id) }));
     },
 
     duplicateLayer: (id) => {
@@ -240,7 +315,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       const layers = [...s.designs[kind]];
       layers.splice(idx + 1, 0, copy);
       commit(`Duplicated ${src.name}`, withLayers(kind, layers), undefined, [kind]);
-      set({ selectedId: copy.id });
+      set({ selectedId: copy.id, selectedIds: [copy.id] });
       return copy.id;
     },
 
@@ -275,8 +350,107 @@ export const useClothing = create<ClothingState>((set, get) => {
       const layers = [...s.designs[kind]];
       layers.splice(layers.findIndex((l) => l.id === id) + 1, 0, copy);
       commit(`Mirrored ${src.name}`, withLayers(kind, layers), undefined, [kind]);
-      set({ selectedId: copy.id });
+      set({ selectedId: copy.id, selectedIds: [copy.id] });
       return copy.id;
+    },
+
+    removeLayers: (ids) => {
+      const s = get();
+      const kind = s.activeKind;
+      const gone = new Set(ids);
+      const layers = s.designs[kind].filter((l) => !gone.has(l.id));
+      if (layers.length === s.designs[kind].length) return;
+      commit(ids.length === 1 ? 'Deleted layer' : `Deleted ${ids.length} layers`, withLayers(kind, layers), undefined, [kind]);
+      set({ selectedId: null, selectedIds: [] });
+    },
+
+    duplicateLayers: (ids) => {
+      const s = get();
+      const kind = s.activeKind;
+      const layers = [...s.designs[kind]];
+      const copies: ClothingLayer[] = [];
+      for (const l of s.designs[kind]) {
+        if (!ids.includes(l.id)) continue;
+        const c = { ...l, id: `${l.id}_c${Date.now().toString(36)}${copies.length}`, name: `${l.name} copy` } as ClothingLayer;
+        if (c.type === 'image' || c.type === 'text' || c.type === 'shape') {
+          (c as ImageLayer | TextLayer | ShapeLayer).x += 8;
+          (c as ImageLayer | TextLayer | ShapeLayer).y += 8;
+        }
+        copies.push(c);
+      }
+      if (!copies.length) return;
+      commit(`Duplicated ${copies.length} layer${copies.length === 1 ? '' : 's'}`, withLayers(kind, [...layers, ...copies]), undefined, [kind]);
+      set({ selectedId: copies[copies.length - 1].id, selectedIds: copies.map((c) => c.id) });
+    },
+
+    updateLayers: (ids, patch, key) => {
+      const s = get();
+      const kind = s.activeKind;
+      const set_ = new Set(ids);
+      const layers = s.designs[kind].map((l) => (set_.has(l.id) ? ({ ...l, ...patch } as ClothingLayer) : l));
+      commit(`Edited ${ids.length} layers`, withLayers(kind, layers), key ?? `multi:${Object.keys(patch).join(',')}`, [kind]);
+    },
+
+    moveLayersBy: (ids, dx, dy, key) => {
+      const s = get();
+      const kind = s.activeKind;
+      const set_ = new Set(ids);
+      const layers = s.designs[kind].map((l) =>
+        set_.has(l.id) && (l.type === 'image' || l.type === 'text' || l.type === 'shape') ? ({ ...l, x: l.x + dx, y: l.y + dy } as ClothingLayer) : l,
+      );
+      commit(`Moved ${ids.length} layers`, withLayers(kind, layers), key ?? `multi:move`, [kind]);
+    },
+
+    alignLayers: (ids, how) => {
+      const s = get();
+      const kind = s.activeKind;
+      const items = s.designs[kind].filter((l): l is ImageLayer | TextLayer | ShapeLayer => ids.includes(l.id) && (l.type === 'image' || l.type === 'text' || l.type === 'shape'));
+      if (items.length < 2) return;
+      const box = (l: ImageLayer | TextLayer | ShapeLayer) => {
+        const b = layerBox(l)!;
+        return { l, x0: b.cx - b.w / 2, x1: b.cx + b.w / 2, y0: b.cy - b.h / 2, y1: b.cy + b.h / 2 };
+      };
+      const bs = items.map(box);
+      const X0 = Math.min(...bs.map((b) => b.x0));
+      const X1 = Math.max(...bs.map((b) => b.x1));
+      const Y0 = Math.min(...bs.map((b) => b.y0));
+      const Y1 = Math.max(...bs.map((b) => b.y1));
+      const patch = new Map<string, { x?: number; y?: number }>();
+      for (const b of bs) {
+        const w = b.x1 - b.x0;
+        const h = b.y1 - b.y0;
+        const p: { x?: number; y?: number } = {};
+        if (how === 'left') p.x = X0 + w / 2;
+        if (how === 'right') p.x = X1 - w / 2;
+        if (how === 'center') p.x = (X0 + X1) / 2;
+        if (how === 'top') p.y = Y0 + h / 2;
+        if (how === 'bottom') p.y = Y1 - h / 2;
+        if (how === 'middle') p.y = (Y0 + Y1) / 2;
+        patch.set(b.l.id, p);
+      }
+      const layers = s.designs[kind].map((l) => (patch.has(l.id) ? ({ ...l, ...patch.get(l.id) } as ClothingLayer) : l));
+      commit(`Aligned ${items.length} layers (${how})`, withLayers(kind, layers), undefined, [kind]);
+    },
+
+    copyLayersToKind: (ids, target) => {
+      const s = get();
+      const from = s.activeKind;
+      if (from === target) return 0;
+      if (from === 'tshirt' || target === 'tshirt') {
+        useUI.getState().toast('warn', 'T-shirts use a different canvas, so layers cannot be copied to or from them.');
+        return 0;
+      }
+      const src = s.designs[from].filter((l) => ids === 'all' || ids.includes(l.id));
+      if (!src.length) return 0;
+      const copies = src.map((l, i) => ({ ...l, id: `${l.id}_to${target}${Date.now().toString(36)}${i}`, name: `${l.name} (from ${TEMPLATES[from].label})`, clip: translateClip(l.clip, from, target) }) as ClothingLayer);
+      const designs = { ...s.designs, [target]: [...s.designs[target], ...copies] };
+      commit(`Copied ${copies.length} layer${copies.length === 1 ? '' : 's'} to ${TEMPLATES[target].label}`, designs, undefined, [target]);
+      return copies.length;
+    },
+
+    jumpHistory: (steps) => {
+      // positive = redo that many actions, negative = undo
+      for (let i = 0; i < Math.abs(steps); i++) (steps < 0 ? get().undo() : get().redo());
     },
 
     moveLayer: (id, delta) => {
@@ -305,14 +479,16 @@ export const useClothing = create<ClothingState>((set, get) => {
     clearDesign: () => {
       const k = get().activeKind;
       commit(`Cleared ${TEMPLATES[k].label.toLowerCase()} design`, withLayers(k, []), undefined, [k]);
-      set({ selectedId: null });
+      set({ selectedId: null, selectedIds: [] });
     },
 
     beginStroke: (stroke) => {
       const s = get();
       const kind = s.activeKind;
       const layers = s.designs[kind];
-      const full: Stroke = { ...stroke, hardness: stroke.hardness ?? s.brush.hardness, alpha: stroke.alpha ?? s.brush.opacity };
+      const b = s.brush;
+      const fill: Stroke['fill'] = stroke.erase || b.fillType === 'solid' ? undefined : b.fillType === 'pattern' ? { type: 'pattern', pattern: b.pattern, color2: b.color2, size: b.patternSize } : { type: 'gradient', color2: b.color2 };
+      const full: Stroke = { ...stroke, hardness: stroke.hardness ?? b.hardness, alpha: stroke.alpha ?? b.opacity, ...(fill ? { fill } : {}) };
       let target = layers.find((l) => l.id === s.selectedId && l.type === 'paint' && !l.locked) as PaintLayer | undefined;
       let next = layers;
       if (!target) {
@@ -336,7 +512,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       // later points of this stroke merge into this same undo step
       set({ lastKey: `stroke:${updated.id}:${index}`, lastTime: Date.now() });
       const colors = [stroke.color, ...get().recentColors.filter((c) => c !== stroke.color)].slice(0, 8);
-      set({ selectedId: updated.id, recentColors: stroke.erase ? get().recentColors : colors });
+      set({ selectedId: updated.id, selectedIds: [updated.id], recentColors: stroke.erase ? get().recentColors : colors });
       return { layerId: updated.id, index, mirrorIndex };
     },
 
@@ -391,15 +567,15 @@ export const useClothing = create<ClothingState>((set, get) => {
       const prev = s.past[s.past.length - 1];
       if (!prev) return;
       set({
-        designs: prev,
+        designs: prev.designs,
         past: s.past.slice(0, -1),
-        future: [s.designs, ...s.future].slice(0, HISTORY_LIMIT),
+        future: [{ designs: s.designs, label: prev.label }, ...s.future].slice(0, HISTORY_LIMIT),
         lastKey: null,
         revision: s.revision + 1,
         designVersion: { shirt: s.designVersion.shirt + 1, pants: s.designVersion.pants + 1, tshirt: s.designVersion.tshirt + 1 },
-        selectedId: s.selectedId && Object.values(prev).some((arr) => arr.some((l) => l.id === s.selectedId)) ? s.selectedId : null,
+        ...keepSelection(s, prev.designs),
       });
-      useUI.getState().log('info', 'Undo');
+      useUI.getState().log('info', `Undo: ${prev.label}`);
       touch();
     },
 
@@ -408,15 +584,15 @@ export const useClothing = create<ClothingState>((set, get) => {
       const next = s.future[0];
       if (!next) return;
       set({
-        designs: next,
-        past: [...s.past, s.designs].slice(-HISTORY_LIMIT),
+        designs: next.designs,
+        past: [...s.past, { designs: s.designs, label: next.label }].slice(-HISTORY_LIMIT),
         future: s.future.slice(1),
         lastKey: null,
         revision: s.revision + 1,
         designVersion: { shirt: s.designVersion.shirt + 1, pants: s.designVersion.pants + 1, tshirt: s.designVersion.tshirt + 1 },
-        selectedId: s.selectedId && Object.values(next).some((arr) => arr.some((l) => l.id === s.selectedId)) ? s.selectedId : null,
+        ...keepSelection(s, next.designs),
       });
-      useUI.getState().log('info', 'Redo');
+      useUI.getState().log('info', `Redo: ${next.label}`);
       touch();
     },
   };

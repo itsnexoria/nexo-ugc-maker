@@ -123,7 +123,8 @@ function TshirtPlane({ map, size }: { map: BodyMap; size: Vec3 }) {
 export function ClothingOverlay({ bone, size }: { bone: string; size: Vec3 }) {
   const rig = useEditor((s) => s.rig);
   const shown = useClothing((s) => s.shown);
-  const map = useMemo(() => bodyMapFor(rig, bone), [rig, bone]);
+  const cal = useClothing((st) => `${st.r15Cal.torsoLower}|${st.r15Cal.limbUpper}|${st.r15Cal.limbLower}`);
+  const map = useMemo(() => bodyMapFor(rig, bone), [rig, bone, cal]); // eslint-disable-line react-hooks/exhaustive-deps
   const sizeKey = size.join(',');
   const stableSize = useMemo(() => size, [sizeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!map) return null;

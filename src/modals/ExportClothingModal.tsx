@@ -4,6 +4,8 @@ import { AlertTriangle, CheckCircle2, ExternalLink, Info, XCircle } from 'lucide
 import { Modal } from '../components/ui/Overlays';
 import { canvasToBlob, exportCanvas, renderFull } from '../clothing/composite';
 import { exportLayeredGlb, type LayeredStats } from '../clothing/layered';
+import { buildFromTemplate, exportTemplateBuild, parseTemplate, uvLayoutGuide, type TemplateBuild, type TemplateInfo } from '../clothing/layeredTemplate';
+import { pickFiles } from '../editor/importers';
 import { KIND_ORDER, TEMPLATES } from '../clothing/templates';
 import { checkCoverage, checkLayers, coverage, type ClothingSeverity } from '../clothing/validation';
 import { useClothing } from '../store/clothing';
@@ -44,6 +46,10 @@ export function ExportClothingModal() {
   const [preview, setPreview] = useState<string | null>(null);
   const [cover, setCover] = useState(0);
   const [puff, setPuff] = useState(0.12);
+  const [tpl, setTpl] = useState<TemplateInfo | null>(null);
+  const [tplBase, setTplBase] = useState<number | undefined>(undefined);
+  const [frontPlusZ, setFrontPlusZ] = useState(false);
+  const [tplBuild, setTplBuild] = useState<TemplateBuild | null>(null);
   const [layeredInfo, setLayeredInfo] = useState<(LayeredStats & { names: string[] }) | null>(null);
 
   const spec = TEMPLATES[kind];
@@ -109,6 +115,53 @@ export function ExportClothingModal() {
       toast('error', e instanceof Error ? e.message : 'Layered export failed.');
     } finally {
       setBusy(false);
+    }
+  };
+
+  const loadTemplate = async () => {
+    const [f] = await pickFiles('.fbx,.glb,.gltf');
+    if (!f) return;
+    setBusy(true);
+    try {
+      const info = await parseTemplate(f.name, await f.arrayBuffer());
+      setTpl(info);
+      setTplBuild(null);
+      setTplBase(undefined);
+      toast('success', `Read ${f.name}: ${info.meshes.length} mesh${info.meshes.length === 1 ? '' : 'es'}, ${info.bones} bones`);
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : 'Could not read the template file.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const buildTemplate = async (download: boolean) => {
+    if (!tpl || kind === 'tshirt') return;
+    setBusy(true);
+    try {
+      const itemName = safeFilename(projectName).replace(/-/g, '_') + (kind === 'pants' ? '_Pants' : '_Jacket');
+      const b = buildFromTemplate(tpl, { kind, name: itemName, puffiness: puff, frontPositiveZ: frontPlusZ, baseIndex: tplBase });
+      setTplBuild(b);
+      if (download) {
+        downloadBlob(await exportTemplateBuild(b), `${itemName}-layered-from-template.glb`);
+        toast('success', `Exported ${b.stats.triangles.toLocaleString()} triangles with the template's own vertices, UVs and skin weights`);
+      }
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : 'Could not build from the template.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const downloadUvLayout = () => {
+    if (!tpl) return;
+    try {
+      const mesh = tpl.meshes[tplBase ?? Math.max(0, tpl.meshes.findIndex((m) => m.role === 'inner'))]?.mesh;
+      const c = mesh ? uvLayoutGuide(mesh.geometry as import('three').BufferGeometry) : null;
+      if (!c) throw new Error('This mesh has no UVs to draw.');
+      c.toBlob((b) => b && downloadBlob(b, 'cage-uv-layout.png'), 'image/png');
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : 'Could not draw the UV layout.');
     }
   };
 
@@ -210,6 +263,84 @@ export function ExportClothingModal() {
                   Roblox requires cage vertices and UVs to <strong>match its own template cages</strong>, and this studio cannot reproduce those. Our cages are placeholders. You must replace them with the cages from Roblox's layered clothing template (Blender or Maya) and fit the mesh to Roblox's R15 body, which differs slightly from this mannequin.
                 </span>
               </div>
+              <div className="tpl-box">
+                <strong>Best: build from Roblox's own cage template</strong>
+                <p className="dim">
+                  Roblox requires your cages to keep the template's vertices and UVs, so the reliable way is to start from its file. Download <code>Clothing_Cage_Template.fbx</code> (or <code>ClassicMannequin_With-Cages.fbx</code>) from Roblox's layered clothing project files, then load it here. The file stays on your device. This path has not been tested against Roblox's real files yet.
+                </p>
+                <div className="row" style={{ flexWrap: 'wrap' }}>
+                  <button className="btn sm" onClick={loadTemplate} disabled={busy}>
+                    {tpl ? 'Load a different template…' : 'Load Roblox cage template…'}
+                  </button>
+                  <a className="hint" href="https://create.roblox.com/docs/avatar/layered-accessories/project-files" target="_blank" rel="noreferrer">
+                    Where to download it <ExternalLink size={11} style={{ verticalAlign: '-1px' }} />
+                  </a>
+                </div>
+                {tpl && (
+                  <>
+                    <table className="grid-table plain" aria-label="Meshes in the template">
+                      <thead>
+                        <tr>
+                          <th>Use as base</th>
+                          <th>Mesh</th>
+                          <th>Found as</th>
+                          <th className="r">Tris</th>
+                          <th>Skin</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tpl.meshes.map((m, i) => (
+                          <tr key={`${m.name}${i}`}>
+                            <td>
+                              <input type="radio" name="tpl-base" aria-label={`Use ${m.name} as the base cage`} checked={(tplBase ?? tpl.meshes.findIndex((x) => x.role === 'inner')) === i} onChange={() => setTplBase(i)} />
+                            </td>
+                            <td className="truncate" title={m.name}>
+                              {m.name}
+                            </td>
+                            <td className="dim">{m.role === 'inner' ? 'inner cage' : m.role === 'outer' ? 'outer cage' : m.role === 'other' ? 'cage' : 'body'}</td>
+                            <td className="num r">{m.triangles.toLocaleString()}</td>
+                            <td>{m.skinned ? 'yes' : 'no'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="row">
+                      <label className="dim" htmlFor="tpl-front" style={{ width: 120 }}>
+                        Template faces
+                      </label>
+                      <select id="tpl-front" className="select" value={frontPlusZ ? '+z' : '-z'} onChange={(e) => setFrontPlusZ(e.target.value === '+z')}>
+                        <option value="-z">−Z (Roblox convention)</option>
+                        <option value="+z">+Z (flip if the design lands backwards)</option>
+                      </select>
+                    </div>
+                    <div className="row" style={{ flexWrap: 'wrap' }}>
+                      <button className="btn sm primary" onClick={() => buildTemplate(true)} disabled={busy}>
+                        Build and download (GLB)
+                      </button>
+                      <button className="btn sm" onClick={downloadUvLayout} disabled={busy}>
+                        Download UV layout (PNG)
+                      </button>
+                    </div>
+                    {tplBuild && (
+                      <ul className="issue-list" aria-label="Template build details">
+                        <li>
+                          <CheckCircle2 size={14} color="var(--ok)" />
+                          <span>
+                            <strong>{tplBuild.stats.triangles.toLocaleString()}</strong> triangles, {tplBuild.stats.bones} bones, {tplBuild.stats.textured ? 'your design baked onto the cage UVs' : 'plain material'}.
+                          </span>
+                        </li>
+                        {tplBuild.warnings.map((w) => (
+                          <li key={w}>
+                            <AlertTriangle size={14} color="var(--warn)" />
+                            <span>{w}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                )}
+              </div>
+              <strong style={{ marginTop: 4 }}>Or: a generic starter (no template needed)</strong>
               <SliderRow label="Puffiness" value={puff} onChange={setPuff} />
               <div className="row">
                 <button className="btn" onClick={downloadLayered} disabled={busy}>

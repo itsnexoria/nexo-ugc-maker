@@ -12,6 +12,7 @@ import { Gizmo, SelectionBox } from './Gizmo';
 import { SceneObjects } from './SceneObjects';
 import { viewportApi } from './api';
 import { handleDroppedFiles } from '../editor/importers';
+import { PerfWatch } from '../components/PerfWatch';
 
 export const QUALITY: Record<Quality, { dpr: number; shadow: number; antialias: boolean }> = {
   low: { dpr: 1, shadow: 512, antialias: false },
@@ -219,6 +220,7 @@ export function Viewport() {
           }}
         />
         <CameraRig controlsRef={controls} />
+        <PerfWatch />
       </Canvas>
     </div>
   );

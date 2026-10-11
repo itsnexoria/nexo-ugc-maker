@@ -266,3 +266,82 @@ describe('accessory texture painting', () => {
     expect(o.paint?.strokes[0]).toMatchObject({ color: '#00ff00', hardness: 0.5, alpha: 0.7 });
   });
 });
+
+import { findMirrorPartner, mirrorPaintHit } from '../src/utils/mirrorPaint';
+import { worldMatrix } from '../src/utils/math';
+
+describe('accessory symmetry painting', () => {
+  beforeEach(() => useEditor.getState().loadProject({ id: 'm', name: 'm', createdAt: 0 }, buildProject('blank')));
+
+  const horns = () => {
+    const def = ASSETS.find((a) => a.id === 'hat-horns')!;
+    const root = useEditor.getState().addAccessory(def.build(), 'hat');
+    const objs = useEditor.getState().objects;
+    const byName = (n: string) => Object.values(objs).find((o) => o.name === n && o.parentId === root)!;
+    return { root, objs, left: byName('Left Horn'), right: byName('Right Horn'), lb: byName('Left Base'), rb: byName('Right Base') };
+  };
+
+  it('pairs left and right parts across the accessory centre line', () => {
+    const h = horns();
+    expect(findMirrorPartner(h.objs, h.left.id)).toBe(h.right.id);
+    expect(findMirrorPartner(h.objs, h.right.id)).toBe(h.left.id);
+    expect(findMirrorPartner(h.objs, h.lb.id)).toBe(h.rb.id);
+  });
+
+  it('treats centred parts as their own partner and leaves unmatched parts alone', () => {
+    const crown = useEditor.getState().addAccessory(ASSETS.find((a) => a.id === 'hat-crown')!.build(), 'hat');
+    const objs = useEditor.getState().objects;
+    const ring = Object.values(objs).find((o) => o.name === 'Ring' && o.parentId === crown)!;
+    expect(findMirrorPartner(objs, ring.id)).toBe(ring.id);
+    // a single off-centre part with no twin has no partner
+    const cube = useEditor.getState().addPrimitive('cube');
+    useEditor.getState().setTransform(cube, { position: [1.7, 0.5, 0.3] });
+    expect(findMirrorPartner(useEditor.getState().objects, cube)).toBeNull();
+  });
+
+  it('reflects a surface point onto the twin part at the mirrored spot', () => {
+    const h = horns();
+    const geo = getPaintGeometry(h.left.kind, h.left.detail);
+    const m = worldMatrix(h.objs, h.left.id);
+    for (const i of [0, 7, 19, 33]) {
+      const w = new THREE.Vector3().fromBufferAttribute(geo.attributes.position, i).applyMatrix4(m);
+      const hit = mirrorPaintHit(h.objs, {}, h.left.id, h.right.id, w)!;
+      expect(hit).not.toBeNull();
+      expect(hit.distance).toBeLessThan(1e-3); // the reflected point really is on the twin's surface
+      expect(hit.u).toBeGreaterThanOrEqual(0);
+      expect(hit.u).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it('gives a point on a centred part a mirror image on the same part', () => {
+    const crown = useEditor.getState().addAccessory(ASSETS.find((a) => a.id === 'hat-crown')!.build(), 'hat');
+    const objs = useEditor.getState().objects;
+    const ring = Object.values(objs).find((o) => o.name === 'Ring' && o.parentId === crown)!;
+    const geo = getPaintGeometry(ring.kind, ring.detail);
+    const w = new THREE.Vector3().fromBufferAttribute(geo.attributes.position, 5).applyMatrix4(worldMatrix(objs, ring.id));
+    const a = mirrorPaintHit(objs, {}, ring.id, ring.id, w)!;
+    expect(a.distance).toBeLessThan(1e-3);
+  });
+
+  it('commits a symmetric stroke on two parts as ONE undo step', () => {
+    const h = horns();
+    const past = useEditor.getState().past.length;
+    const idx = useEditor.getState().beginPaintStrokes([
+      { id: h.left.id, stroke: { color: '#f00', size: 6, erase: false, points: [[10, 10]] } },
+      { id: h.right.id, stroke: { color: '#f00', size: 6, erase: false, points: [[200, 10]] } },
+    ]);
+    expect(idx).toEqual([0, 0]);
+    for (let i = 1; i <= 4; i++)
+      useEditor.getState().extendPaintStrokes([
+        { id: h.left.id, index: 0, points: [[10 + i * 4, 10]] },
+        { id: h.right.id, index: 0, points: [[200 - i * 4, 10]] },
+      ]);
+    const o = useEditor.getState().objects;
+    expect(o[h.left.id].paint!.strokes[0].points).toHaveLength(5);
+    expect(o[h.right.id].paint!.strokes[0].points).toHaveLength(5);
+    expect(useEditor.getState().past.length).toBe(past + 1);
+    useEditor.getState().undo();
+    expect(useEditor.getState().objects[h.left.id].paint).toBeUndefined();
+    expect(useEditor.getState().objects[h.right.id].paint).toBeUndefined();
+  });
+});

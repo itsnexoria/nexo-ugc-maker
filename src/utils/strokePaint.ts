@@ -1,13 +1,39 @@
 import type { Stroke } from '../types';
+import { makeTile } from './patterns';
 
 /**
  * Brush stroke engine shared by the clothing designer and accessory texture painting.
  * Strokes are stored as vectors (points + brush settings) so projects stay small and undo is cheap.
  */
 
+/** Colour, pattern or gradient used to paint a stroke. */
+function strokeStyleFor(g: CanvasRenderingContext2D, st: Stroke): string | CanvasPattern | CanvasGradient {
+  const f = st.fill;
+  if (!f) return st.color;
+  if (f.type === 'pattern') {
+    const pat = g.createPattern(makeTile(f.pattern, f.size, st.color, f.color2), 'repeat');
+    return pat ?? st.color;
+  }
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  for (const p of st.points) {
+    y0 = Math.min(y0, p[1]);
+    y1 = Math.max(y1, p[1]);
+  }
+  y0 -= st.size / 2;
+  y1 += st.size / 2;
+  if (!(y1 - y0 > 1)) return st.color;
+  const grad = g.createLinearGradient(0, y0, 0, y1);
+  grad.addColorStop(0, st.color);
+  grad.addColorStop(1, f.color2);
+  return grad;
+}
+
 export function drawStrokePath(g: CanvasRenderingContext2D, st: Stroke, color: string): void {
-  g.strokeStyle = color;
-  g.fillStyle = color;
+  const style = strokeStyleFor(g, st);
+  void color;
+  g.strokeStyle = style;
+  g.fillStyle = style;
   g.lineWidth = st.size;
   if (st.points.length === 1) {
     g.beginPath();
@@ -78,7 +104,7 @@ function strokeBox(st: Stroke, scale: number, pxW: number, pxH: number) {
 export function drawStroke(g: CanvasRenderingContext2D, st: Stroke, pxW: number, pxH: number, scale: number): void {
   if (!st.points.length) return;
   const alpha = Math.min(1, Math.max(0, st.alpha ?? 1));
-  const soft = (st.hardness ?? 1) < 0.97;
+  const soft = (st.hardness ?? 1) < 0.97 && !st.fill; // pattern/gradient strokes are always hard-edged
   const op: GlobalCompositeOperation = st.erase ? 'destination-out' : 'source-over';
   if (!soft && alpha >= 0.999) {
     g.globalCompositeOperation = op;

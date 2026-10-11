@@ -472,3 +472,31 @@ input[type='range']::-moz-range-thumb {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------- touch polish ---------- */
+body {
+  overscroll-behavior: none;
+}
+button,
+select,
+.numfield-label,
+.tool,
+.tree-row,
+.lrow,
+.seg button {
+  touch-action: manipulation;
+}
+.toolbox,
+.tree,
+.layer-list,
+.seg,
+.tabs {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.viewport-wrap canvas,
+.design-wrap canvas {
+  touch-action: none;
+  -webkit-touch-callout: none;
+}

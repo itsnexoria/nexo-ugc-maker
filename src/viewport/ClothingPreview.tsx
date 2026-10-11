@@ -8,6 +8,7 @@ import { useSettings } from '../store/settings';
 import { Avatar } from './Avatar';
 import { CameraRig, Floor, QUALITY, Studio } from './Viewport';
 import { resetTextures, syncTextures } from '../clothing/composite';
+import { PerfWatch } from '../components/PerfWatch';
 import type { Vec3 } from '../types';
 
 function TextureSync() {
@@ -46,6 +47,7 @@ export function ClothingPreview() {
         <TextureSync />
         <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.12} minDistance={2} maxDistance={40} maxPolarAngle={Math.PI * 0.499} target={[0, 2.9, 0]} />
         <CameraRig controlsRef={controls} />
+        <PerfWatch />
       </Canvas>
     </div>
   );
