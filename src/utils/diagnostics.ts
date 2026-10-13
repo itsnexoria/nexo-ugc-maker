@@ -3,6 +3,8 @@ import { useEditor } from '../store/editor';
 import { useSettings } from '../store/settings';
 import { useUI } from '../store/ui';
 import { viewportApi } from '../viewport/api';
+import { serializeCurrentProject } from '../store/serialize';
+import { stringifyProjectFile } from './projectFile';
 
 /**
  * Plain-text report a user can paste into a bug report. Nothing is sent anywhere:
@@ -71,8 +73,7 @@ export function currentProjectBackup(): { name: string; json: string } | null {
   const ed = useEditor.getState();
   if (ed.screen !== 'editor' && ed.screen !== 'clothing') return null;
   try {
-    const data = ed.screen === 'clothing' ? { ...ed.serialize(), clothing: useClothing.getState().serialize() } : ed.serialize();
-    return { name: ed.project.name, json: JSON.stringify({ app: 'nexo-ugc-studio', version: 1, name: ed.project.name, data }) };
+    return { name: ed.project.name, json: stringifyProjectFile(ed.project.name, serializeCurrentProject()) };
   } catch {
     return null;
   }

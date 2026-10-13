@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.6.0 - Import and export
+- **Models keep their materials and textures.** GLB, glTF and OBJ imports are split by material: each material becomes its own part (under a group) with its colour, metalness, roughness, transparency, glow and texture. Textures are decoded once, shared between parts, scaled to 1024 px and added to the library. Pick or drop the model together with its `.mtl`, `.bin` and picture files; the model's own file names are matched. A warning names any pictures the model needed but were not provided. glTF textures are no longer upside down (V is flipped on import).
+- **Upload bundle (ZIP)** for accessories: the model, a `README.md` checklist (status, triangle budget, attachment name, every validation result as a tick box, a pre-upload list), `validation-report.txt`, a project backup and a preview image.
+- **Clothing export:** the preview is now the real exported PNG, decoded back from the file, with its exact size and weight. A check confirms it is exactly 585 × 559 (or 128 / 256 / 512 for T-shirts). **Upload bundle (ZIP)** adds a README with each file's upload type, size, weight, coverage and checklist.
+- **Project files are versioned and validated.** Format 2 records the app version. Files from a newer version are refused with a clear message instead of being half-read. Damaged files are repaired rather than rejected: unknown shapes, missing parents, parent loops, missing textures, broken order lists, damaged images and clothing layers are fixed or dropped, and the import says what it repaired.
+- **Fixed:** "Download project file" from the clothing editor left out every clothing design, so re-importing it gave an empty project. One shared serializer is now used by saving, backup and download.
+- Tests: 36 new tests (project file versions and repairs, material splitting, glTF and OBJ+MTL parsing, bundles).
+
+## 1.5.0 - Reliability
+- **Save failures are loud now.** A banner appears when a project cannot be saved, with one-click **Download backup** and **Try again**. Failed saves are retried quietly in the background (8 s, 20 s, then every minute), and "this browser has no storage space left" is reported in plain words.
+- **Crash-safe saving.** Data, dashboard entry and backup are written in a single database transaction, so a crash, a full disk or a closed tab can never leave a half-saved project. A rolling backup keeps the previous good version (refreshed at most every 5 minutes so it stays a real step back); restore it from the clock button on a project card. Restoring swaps the two, so it can be reversed.
+- **Storage warnings.** A banner at 80% and 95% of the browser's storage quota, and when a single project grows past 25 MB. **Shrink images** scales textures to Roblox's 1024 px limit and clothing images to 1170 px, re-encoding only when it saves space (pixel art is never recompressed lossily). Big pictures are also scaled down automatically when imported.
+- **Clean up unused** on the Textures and Images tabs deletes library items no part or layer uses (clothing: undoable).
+- **Fixed:** undo after deleting a clothing image brought back layers pointing at a missing image. Deleting images is now part of undo history.
+- **Fixed:** leaving the editor after a failed save silently lost work. It now asks first.
+- **Fixed:** a blocked database open (another tab) was remembered forever, so every later save failed until reload. The database also lets go when another tab upgrades it.
+- **Fixed:** removing a project used two transactions and could leave orphaned data.
+- **Fixed:** pausing in the middle of a brush stroke split it into several undo steps. A stroke is one undo step.
+- **Fixed:** undo/redo in the clothing editor could silently change another tab (shirt vs pants). It now switches to the tab it changed.
+- **Fixed:** the offline cache could be replaced by an error page, and cached files from every deploy piled up forever. Each build has its own cache; only the current and previous are kept.
+- **Fixed:** memory growth from decoded textures and painted rasters when switching projects; two success toasts on clothing import; clothing import read the dropped file twice; two overlapping saves could run together; downloads could be cut off on slow devices; OBJ parts with spaces in their names; two sample projects could be created in development.
+- Tests: 38 new tests (database, rolling backup, atomic saves, session save and retry, storage levels, service worker, undo history, stroke merging).
+
 ## 1.4.0
 - Clothing: multi-select with box select, group move/edit/duplicate/delete and alignment; History tab with click-to-jump; pattern and gradient brushes; Send to (shirt layers to pants and back).
 - R15: adjustable segment split saved with the project and a numbered test pattern for checking against a real avatar.

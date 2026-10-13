@@ -7,6 +7,7 @@ import { useSettings } from '../store/settings';
 import { useUI, type MenuItem } from '../store/ui';
 import { useViewport } from '../store/viewport';
 import { duplicateCurrent, goHome, saveNow } from '../store/session';
+import { serializeCurrentProject } from '../store/serialize';
 import * as projects from '../store/projects';
 import { downloadBlob, safeFilename, timeAgo } from '../utils/download';
 import { copyDiagnostics } from '../utils/diagnostics';
@@ -107,7 +108,7 @@ export function TopBar({ mode = 'accessory' }: { mode?: 'accessory' | 'clothing'
         label: 'Download project file',
         icon: ic(Download),
         onClick: () => {
-          const text = projects.toProjectFile(ed.project.name, ed.serialize());
+          const text = projects.toProjectFile(ed.project.name, serializeCurrentProject());
           downloadBlob(new Blob([text], { type: 'application/json' }), `${safeFilename(ed.project.name)}.nexougc.json`);
         },
       },

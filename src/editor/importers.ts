@@ -1,12 +1,10 @@
-import * as THREE from 'three';
-import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
-import { geometryToModelAsset } from '../utils/geometry';
+import { geometryToModelAsset, triangleCount } from '../utils/geometry';
+import { MODEL_EXTENSIONS, SIDECAR_EXTENSIONS, extOf, loadModelFiles, normaliseParts, textureToDataUrl } from './modelImport';
 import { uid } from '../utils/ids';
 import type { TextureAsset } from '../types';
+import { CLOTHING_IMAGE_MAX_DIM, TEXTURE_MAX_DIM, optimizeDataUrl } from '../utils/imageOptimize';
 
 const MAX_TEXTURE_BYTES = 12 * 1024 * 1024;
 const MAX_MODEL_BYTES = 40 * 1024 * 1024;
@@ -29,12 +27,19 @@ export function imageSize(dataUrl: string): Promise<{ width: number; height: num
   });
 }
 
-export async function textureFromFile(file: File): Promise<Omit<TextureAsset, 'id' | 'createdAt' | 'source'>> {
+export type LoadedTexture = Omit<TextureAsset, 'id' | 'createdAt' | 'source'> & { shrunkFrom?: { width: number; height: number } };
+
+/** Reads an image file as a texture. Anything over Roblox's 1024 px limit is scaled down so it is stored (and exported) at a usable size. */
+export async function textureFromFile(file: File): Promise<LoadedTexture> {
   if (!/^image\/(png|jpeg|webp)$/.test(file.type)) throw new Error(`"${file.name}" is not a PNG, JPG or WebP image.`);
   if (file.size > MAX_TEXTURE_BYTES) throw new Error(`"${file.name}" is larger than 12 MB.`);
-  const dataUrl = await readAsDataUrl(file);
-  const { width, height } = await imageSize(dataUrl);
-  return { name: file.name.replace(/\.[^.]+$/, ''), dataUrl, width, height };
+  const raw = await readAsDataUrl(file);
+  const { width, height } = await imageSize(raw);
+  const name = file.name.replace(/\.[^.]+$/, '');
+  const opt = await optimizeDataUrl(raw, { maxDim: TEXTURE_MAX_DIM });
+  if (!opt.changed) return { name, dataUrl: raw, width, height };
+  const scaled = opt.width !== width || opt.height !== height;
+  return { name, dataUrl: opt.dataUrl, width: opt.width, height: opt.height, ...(scaled ? { shrunkFrom: { width, height } } : {}) };
 }
 
 /** Adds an uploaded image to the project's texture library. */
@@ -42,7 +47,7 @@ export async function uploadTexture(file: File, applyToSelected = true): Promise
   const ui = useUI.getState();
   try {
     ui.setBusy('Loading texture…');
-    const t = await textureFromFile(file);
+    const { shrunkFrom, ...t } = await textureFromFile(file);
     const asset: TextureAsset = { ...t, id: uid('tex'), source: 'upload', createdAt: Date.now() };
     const ed = useEditor.getState();
     ed.addTexture(asset);
@@ -53,6 +58,7 @@ export async function uploadTexture(file: File, applyToSelected = true): Promise
     } else {
       ui.toast('success', `Texture "${asset.name}" added to the library (${asset.width}×${asset.height})`);
     }
+    if (shrunkFrom) ui.toast('info', `"${asset.name}" was ${shrunkFrom.width}×${shrunkFrom.height}. Scaled to ${asset.width}×${asset.height}, Roblox's maximum.`);
     return asset;
   } catch (err) {
     ui.toast('error', err instanceof Error ? err.message : 'Texture upload failed.');
@@ -62,72 +68,53 @@ export async function uploadTexture(file: File, applyToSelected = true): Promise
   }
 }
 
-function collectGeometry(root: THREE.Object3D): THREE.BufferGeometry {
-  root.updateMatrixWorld(true);
-  const parts: THREE.BufferGeometry[] = [];
-  root.traverse((o) => {
-    const mesh = o as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-    let g = mesh.geometry.clone();
-    g.applyMatrix4(mesh.matrixWorld);
-    if (g.index) g = g.toNonIndexed();
-    if (!g.attributes.normal) g.computeVertexNormals();
-    if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array((g.attributes.position.count || 0) * 2), 2));
-    for (const name of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(name)) g.deleteAttribute(name);
-    g.clearGroups();
-    parts.push(g);
-  });
-  if (!parts.length) throw new Error('No meshes were found in this file.');
-  const merged = mergeGeometries(parts, false);
-  if (!merged) throw new Error('The meshes in this file could not be combined.');
-  parts.forEach((p) => p.dispose());
-  return merged;
-}
-
-/** Centres the mesh and scales unusually large/small files to a sensible accessory size. */
-function normalise(g: THREE.BufferGeometry): { scaled: boolean; factor: number } {
-  g.computeBoundingBox();
-  const box = g.boundingBox!;
-  const centre = box.getCenter(new THREE.Vector3());
-  g.translate(-centre.x, -centre.y, -centre.z);
-  const size = box.getSize(new THREE.Vector3());
-  const max = Math.max(size.x, size.y, size.z);
-  let factor = 1;
-  if (max > 8 || max < 0.2) {
-    factor = 2 / max;
-    g.scale(factor, factor, factor);
-  }
-  g.computeBoundingBox();
-  return { scaled: factor !== 1, factor };
-}
-
 export async function importModelFile(file: File): Promise<boolean> {
+  return importModelFiles([file]);
+}
+
+/**
+ * Imports a model together with the files it needs (an OBJ's .mtl, a glTF's .bin, texture pictures).
+ * Each material becomes its own part, keeping its colour, finish and texture.
+ */
+export async function importModelFiles(files: File[]): Promise<boolean> {
   const ui = useUI.getState();
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   try {
-    if (!['obj', 'glb', 'gltf'].includes(ext)) throw new Error(`"${file.name}" is not a supported model. Use .obj, .glb or .gltf.`);
-    if (file.size > MAX_MODEL_BYTES) throw new Error(`"${file.name}" is larger than 40 MB.`);
-    ui.setBusy(`Importing ${file.name}…`);
-    let root: THREE.Object3D;
-    if (ext === 'obj') {
-      root = new OBJLoader().parse(await file.text());
-    } else {
-      const buf = await file.arrayBuffer();
-      const gltf = await new Promise<{ scene: THREE.Object3D }>((resolve, reject) =>
-        new GLTFLoader().parse(buf, '', resolve, (e) => reject(new Error(e instanceof Error ? e.message : 'Invalid glTF file'))),
-      );
-      root = gltf.scene;
+    const model = files.find((f) => MODEL_EXTENSIONS.includes(extOf(f.name)));
+    if (!model) throw new Error(`${files[0] ? `"${files[0].name}" is not a supported model. ` : ''}Use .obj, .glb or .gltf.`);
+    const total = files.reduce((n, f) => n + f.size, 0);
+    if (total > MAX_MODEL_BYTES) throw new Error(`These files add up to more than 40 MB.`);
+    ui.setBusy(`Importing ${model.name}…`);
+    const loaded = await loadModelFiles(files);
+    const { scaled, factor } = normaliseParts(loaded.parts);
+    const tris = loaded.parts.reduce((n, p) => n + triangleCount(p.geometry), 0);
+    if (tris > 200_000) throw new Error(`This mesh has ${tris.toLocaleString()} triangles, which is too heavy for the browser editor.`);
+
+    // decode each distinct picture once and share it between the parts that use it
+    const textureByMap = new Map<unknown, TextureAsset>();
+    const textures: TextureAsset[] = [];
+    for (const p of loaded.parts) {
+      if (!p.map) continue;
+      let asset = textureByMap.get(p.map);
+      if (!asset) {
+        const img = await textureToDataUrl(p.map);
+        if (!img) continue;
+        asset = { id: uid('tex'), name: p.name, dataUrl: img.dataUrl, width: img.width, height: img.height, source: 'upload', createdAt: Date.now() };
+        textureByMap.set(p.map, asset);
+        textures.push(asset);
+      }
+      p.material.textureId = asset.id;
     }
-    const geo = collectGeometry(root);
-    const { scaled, factor } = normalise(geo);
-    const name = file.name.replace(/\.[^.]+$/, '');
-    const asset = geometryToModelAsset(uid('model'), name, geo);
-    geo.dispose();
-    if (asset.triangles > 200_000) throw new Error(`This mesh has ${asset.triangles.toLocaleString()} triangles, which is too heavy for the browser editor.`);
-    useEditor.getState().addImported(asset, name);
-    if (scaled) ui.toast('info', `Imported "${name}" and scaled it by ${factor.toFixed(3)} to fit the avatar.`);
-    else ui.toast('success', `Imported "${name}" (${asset.triangles.toLocaleString()} triangles)`);
-    if (asset.triangles > 4000) ui.toast('warn', 'Over 4,000 triangles. Check the Validation tab before exporting.');
+    const parts = loaded.parts.map((p) => ({ model: geometryToModelAsset(uid('model'), p.name, p.geometry), name: p.name, material: p.material }));
+    loaded.parts.forEach((p) => p.geometry.dispose());
+    useEditor.getState().addImportedParts(loaded.name, parts, textures);
+
+    const note = [
+      parts.length > 1 ? `${parts.length} materials` : null,
+      textures.length ? `${textures.length} texture${textures.length === 1 ? '' : 's'}` : null,
+    ].filter(Boolean);
+    ui.toast('success', `Imported "${loaded.name}" (${tris.toLocaleString()} triangles${note.length ? `, ${note.join(', ')} kept` : ''})${scaled ? `, scaled by ${factor.toFixed(3)} to fit the avatar` : ''}`);
+    if (loaded.missingTextures.length) ui.toast('warn', `The model refers to ${loaded.missingTextures.slice(0, 3).join(', ')}${loaded.missingTextures.length > 3 ? ' …' : ''}, which was not selected. Pick the picture files together with the model to keep its textures.`);
+    if (tris > 4000) ui.toast('warn', 'Over 4,000 triangles. Check the Validation tab before exporting.');
     return true;
   } catch (err) {
     ui.toast('error', err instanceof Error ? err.message : 'Model import failed.');
@@ -138,6 +125,8 @@ export async function importModelFile(file: File): Promise<boolean> {
 }
 
 /** Opens a native file picker and resolves with the chosen files. */
+export const MODEL_ACCEPT = '.obj,.glb,.gltf,.mtl,.bin,image/png,image/jpeg,image/webp';
+
 export function pickFiles(accept: string, multiple = false): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
@@ -161,7 +150,8 @@ export async function handleDroppedFiles(files: File[]): Promise<void> {
       const spec = TEMPLATES[kind];
       let looksLikeTemplate = false;
       try {
-        const size = await imageSize(await readAsDataUrl(f));
+        // measure without reading the whole file into a data URL (it is read once more by the import itself)
+        const size = typeof createImageBitmap === 'function' ? await createImageBitmap(f).then((b) => (b.close(), { width: b.width, height: b.height })) : await imageSize(await readAsDataUrl(f));
         looksLikeTemplate = kind !== 'tshirt' && size.width === spec.width && size.height === spec.height;
       } catch {
         /* handled by the upload below */
@@ -171,8 +161,15 @@ export async function handleDroppedFiles(files: File[]): Promise<void> {
     }
     return;
   }
+  // a model dropped together with its .mtl, .bin and pictures is imported as one thing
+  if (files.some((f) => MODEL_EXTENSIONS.includes(extOf(f.name)))) {
+    const models = files.filter((f) => MODEL_EXTENSIONS.includes(extOf(f.name)));
+    const rest = files.filter((f) => !MODEL_EXTENSIONS.includes(extOf(f.name)));
+    for (const m of models) await importModelFiles([m, ...(models.length === 1 ? rest : [])]);
+    return;
+  }
   for (const f of files) {
-    if (/\.(obj|glb|gltf)$/i.test(f.name)) await importModelFile(f);
+    if (SIDECAR_EXTENSIONS.includes(extOf(f.name))) useUI.getState().toast('warn', `"${f.name}" belongs to a model. Drop it together with the .obj or .gltf file.`);
     else if (f.type.startsWith('image/')) await uploadTexture(f);
     else useUI.getState().toast('warn', `"${f.name}" isn't a supported file. Drop a .obj, .glb, .gltf or image.`);
   }
@@ -185,19 +182,25 @@ import type { ClothingImage } from '../types';
 import { TEMPLATES } from '../clothing/templates';
 
 /** Adds an uploaded picture to the clothing image library, and optionally places it as a layer. */
-export async function uploadClothingImage(file: File, asLayer = true): Promise<ClothingImage | null> {
+export async function uploadClothingImage(file: File, asLayer = true, quiet = false): Promise<ClothingImage | null> {
   const ui = useUI.getState();
   try {
     if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) throw new Error(`"${file.name}" is not a PNG, JPG, WebP or GIF image.`);
     if (file.size > MAX_TEXTURE_BYTES) throw new Error(`"${file.name}" is larger than 12 MB.`);
     ui.setBusy('Loading image…');
-    const dataUrl = await readAsDataUrl(file);
-    const { width, height } = await imageSize(dataUrl);
+    const raw = await readAsDataUrl(file);
+    const natural = await imageSize(raw);
+    // pictures far bigger than the template are scaled down: layers are drawn at template size anyway
+    const opt = await optimizeDataUrl(raw, { maxDim: CLOTHING_IMAGE_MAX_DIM });
+    const { dataUrl, width, height } = opt.changed ? opt : { dataUrl: raw, ...natural };
     const img: ClothingImage = { id: uid('img'), name: file.name.replace(/\.[^.]+$/, ''), dataUrl, width, height };
     const cl = useClothing.getState();
     cl.addImage(img);
     if (asLayer) cl.addLayer('image', { image: img });
-    ui.toast('success', `Added "${img.name}" (${width}×${height})`);
+    if (!quiet) {
+      const shrunk = width !== natural.width || height !== natural.height;
+      ui.toast('success', shrunk ? `Added "${img.name}" (scaled from ${natural.width}×${natural.height} to ${width}×${height})` : `Added "${img.name}" (${width}×${height})`);
+    }
     return img;
   } catch (err) {
     ui.toast('error', err instanceof Error ? err.message : 'Image upload failed.');
@@ -214,7 +217,7 @@ export async function uploadClothingImage(file: File, asLayer = true): Promise<C
 export async function importClothingTemplate(file: File): Promise<boolean> {
   const ui = useUI.getState();
   try {
-    const img = await uploadClothingImage(file, false);
+    const img = await uploadClothingImage(file, false, true);
     if (!img) return false;
     const cl = useClothing.getState();
     const spec = TEMPLATES[cl.activeKind];

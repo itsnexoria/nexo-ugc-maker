@@ -12,6 +12,7 @@ import { useClothing } from '../store/clothing';
 import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { downloadBlob, safeFilename } from '../utils/download';
+import { clothingReadme, formatBytes, type ClothingReadmeItem } from '../utils/bundle';
 import type { ClothingKind } from '../types';
 
 const ICON: Record<ClothingSeverity, JSX.Element> = {
@@ -44,6 +45,8 @@ export function ExportClothingModal() {
   const [tSize, setTSize] = useState(128);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
+  /** the file that would actually be downloaded: decoded back from the PNG, so what you see is what you get */
+  const [finalFile, setFinalFile] = useState<{ width: number; height: number; bytes: number } | null>(null);
   const [cover, setCover] = useState(0);
   const [puff, setPuff] = useState(0.12);
   const [tpl, setTpl] = useState<TemplateInfo | null>(null);
@@ -53,20 +56,53 @@ export function ExportClothingModal() {
   const [layeredInfo, setLayeredInfo] = useState<(LayeredStats & { names: string[] }) | null>(null);
 
   const spec = TEMPLATES[kind];
+  const outSize = kind === 'tshirt' ? tSize : null;
+  const wantW = outSize ?? spec.width;
+  const wantH = outSize ?? spec.height;
   const checks = useMemo(() => {
     const list = checkLayers(kind, designs[kind], images);
     if (designs[kind].some((l) => l.visible)) list.push(checkCoverage(kind, cover));
+    if (finalFile) {
+      const exact = finalFile.width === wantW && finalFile.height === wantH;
+      list.push(
+        exact
+          ? { id: 'final-size', severity: 'ok', title: `Exports at exactly ${wantW} × ${wantH}`, detail: `${formatBytes(finalFile.bytes)} PNG` }
+          : { id: 'final-size', severity: 'error', title: `The PNG came out ${finalFile.width} × ${finalFile.height}`, detail: `Roblox expects ${wantW} × ${wantH}` },
+      );
+    }
     return list;
-  }, [kind, designs, images, cover]);
+  }, [kind, designs, images, cover, finalFile, wantW, wantH]);
   const blocking = checks.some((c) => c.severity === 'error');
 
   useEffect(() => {
     const c = renderFull(kind);
-    setPreview(c.toDataURL('image/png'));
     setCover(coverage(kind, c));
   }, [kind, designs]);
 
-  const outSize = kind === 'tshirt' ? tSize : null;
+  // preview the real exported PNG (right size, real transparency), not just the working canvas
+  useEffect(() => {
+    let live = true;
+    let url: string | null = null;
+    void (async () => {
+      try {
+        const blob = await canvasToBlob(exportCanvas(kind, outSize ?? undefined));
+        const bmp = await createImageBitmap(blob);
+        const info = { width: bmp.width, height: bmp.height, bytes: blob.size };
+        bmp.close();
+        if (!live) return;
+        url = URL.createObjectURL(blob);
+        setPreview(url);
+        setFinalFile(info);
+      } catch {
+        if (live) setFinalFile(null);
+      }
+    })();
+    return () => {
+      live = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [kind, designs, outSize]);
+
   const fileFor = (k: ClothingKind) => `${safeFilename(projectName)}-${k === 'tshirt' ? 't-shirt' : k}.png`;
 
   const download = async () => {
@@ -86,16 +122,27 @@ export function ExportClothingModal() {
     setBusy(true);
     try {
       const zip = new JSZip();
-      let n = 0;
+      const items: ClothingReadmeItem[] = [];
       for (const k of KIND_ORDER) {
         if (!designs[k].some((l) => l.visible)) continue;
-        zip.file(fileFor(k), await canvasToBlob(exportCanvas(k, k === 'tshirt' ? tSize : undefined)));
-        n++;
+        const size = k === 'tshirt' ? tSize : undefined;
+        const canvas = exportCanvas(k, size);
+        const blob = await canvasToBlob(canvas);
+        const frac = coverage(k, renderFull(k));
+        const kChecks = checkLayers(k, designs[k], images);
+        kChecks.push(checkCoverage(k, frac));
+        const bmp = await createImageBitmap(blob);
+        const want = TEMPLATES[k];
+        const exact = bmp.width === (size ?? want.width) && bmp.height === (size ?? want.height);
+        kChecks.push(exact ? { id: 'final-size', severity: 'ok', title: `Exports at exactly ${bmp.width} × ${bmp.height}` } : { id: 'final-size', severity: 'error', title: `The PNG came out ${bmp.width} × ${bmp.height}`, detail: `Roblox expects ${size ?? want.width} × ${size ?? want.height}` });
+        items.push({ kind: k, file: fileFor(k), width: bmp.width, height: bmp.height, bytes: blob.size, coverage: frac, checks: kChecks.map((c) => ({ severity: c.severity, title: c.title, detail: c.detail })) });
+        bmp.close();
+        zip.file(fileFor(k), blob);
       }
-      if (!n) throw new Error('Every design is empty. Add some artwork first.');
-      zip.file('README.txt', 'Exported from Nexo UGC Studio by Nexoria.\nUpload each PNG on the Roblox Creator Hub as Shirt, Pants or T-Shirt (matching the file name).\n');
+      if (!items.length) throw new Error('Every design is empty. Add some artwork first.');
+      zip.file('README.md', clothingReadme({ name: projectName, items, appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev', date: new Date().toISOString().slice(0, 10) }));
       downloadBlob(await zip.generateAsync({ type: 'blob' }), `${safeFilename(projectName)}-clothing.zip`);
-      toast('success', `Exported ${n} file${n === 1 ? '' : 's'} as a ZIP`);
+      toast('success', `Exported ${items.length} file${items.length === 1 ? '' : 's'} with a README checklist`);
     } catch (e) {
       toast('error', e instanceof Error ? e.message : 'Export failed.');
     } finally {
@@ -174,7 +221,7 @@ export function ExportClothingModal() {
         <>
           <span className="hint grow">{blocking ? 'Fix the errors, or export anyway to inspect the file.' : 'Ready to export.'}</span>
           <button className="btn" onClick={downloadAll} disabled={busy}>
-            Download all (ZIP)
+            Upload bundle (ZIP)
           </button>
           <button className="btn primary" onClick={download} disabled={busy}>
             {busy ? 'Exporting…' : `Download ${spec.label} PNG`}
@@ -191,7 +238,7 @@ export function ExportClothingModal() {
               </button>
             ))}
           </div>
-          <div className="export-preview" style={{ aspectRatio: `${spec.width} / ${spec.height}` }}>
+          <div className="export-preview checker" style={{ aspectRatio: `${spec.width} / ${spec.height}` }}>
             {preview && <img src={preview} alt={`${spec.label} template preview`} />}
           </div>
           <div className="export-summary">
@@ -201,8 +248,12 @@ export function ExportClothingModal() {
             <div>
               <span className="dim">Size</span>{' '}
               <span className="num">
-                {outSize ?? spec.width} × {outSize ?? spec.height}
+                {wantW} × {wantH}
               </span>
+              {kind !== 'tshirt' || tSize === 128 ? <span className="dim"> (Roblox template size)</span> : null}
+            </div>
+            <div>
+              <span className="dim">File</span> <span className="num">{finalFile ? formatBytes(finalFile.bytes) : '…'}</span>
             </div>
           </div>
           {kind === 'tshirt' && (

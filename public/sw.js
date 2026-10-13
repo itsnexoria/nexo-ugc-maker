@@ -1,6 +1,9 @@
 /* Nexo UGC Studio service worker: makes the app work offline after the first visit.
    No tracking, no remote calls: it only caches this site's own files. */
-const VERSION = 'nexo-ugc-v1';
+// The build replaces __BUILD_ID__ with a timestamp, so every deploy gets its own cache and old ones are pruned.
+// (Cache names sort by time, which is how "the previous build" is found below.)
+const VERSION = 'nexo-ugc-__BUILD_ID__';
+const KEEP_PREVIOUS = 1; // a tab still running the old build can keep loading its own files
 const SHELL = ['./', './index.html', './manifest.webmanifest', './brand/icon-192.png', './brand/icon-512.png', './brand/nexo-mark-128.png', './brand/nexo-mark-64.png'];
 
 self.addEventListener('install', (event) => {
@@ -16,7 +19,10 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k.startsWith('nexo-ugc-') && k !== VERSION).map((k) => caches.delete(k))))
+      .then((keys) => {
+        const old = keys.filter((k) => k.startsWith('nexo-ugc-') && k !== VERSION).sort().reverse();
+        return Promise.all(old.slice(KEEP_PREVIOUS).map((k) => caches.delete(k)));
+      })
       .then(() => self.clients.claim()),
   );
 });
@@ -36,8 +42,11 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(VERSION).then((c) => c.put('./index.html', copy));
+          // only a good page may replace the cached app: an error page cached here would break offline use
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(VERSION).then((c) => c.put('./index.html', copy));
+          }
           return res;
         })
         .catch(() => caches.match('./index.html').then((r) => r || caches.match('./'))),
@@ -50,7 +59,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(req).then((cached) => {
       const network = fetch(req)
         .then((res) => {
-          if (res && res.ok) {
+          if (res && res.ok && res.type === 'basic') {
             const copy = res.clone();
             caches.open(VERSION).then((c) => c.put(req, copy));
           }

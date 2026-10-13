@@ -27,7 +27,7 @@ import {
   Wand2,
 } from 'lucide-react';
 import { CATEGORY_LABELS } from '../assets/presets';
-import { importModelFile, pickFiles, uploadTexture } from '../editor/importers';
+import { MODEL_ACCEPT, importModelFiles, pickFiles, uploadTexture } from '../editor/importers';
 import { useEditor } from '../store/editor';
 import type { AssetCategory, ShapeKind, ToolMode } from '../types';
 import { AssetGrid } from './AssetGrid';
@@ -121,8 +121,8 @@ export function Toolbox() {
           className="icon-btn tool"
           aria-label="Import Model"
           onClick={async () => {
-            const [f] = await pickFiles('.obj,.glb,.gltf');
-            if (f) await importModelFile(f);
+            const files = await pickFiles(MODEL_ACCEPT, true);
+            if (files.length) await importModelFiles(files);
           }}
         >
           <Upload size={17} />
@@ -166,8 +166,8 @@ export function Toolbox() {
                   className="picker-item"
                   onClick={async () => {
                     setOpen(null);
-                    const [f] = await pickFiles('.obj,.glb,.gltf');
-                    if (f) await importModelFile(f);
+                    const files = await pickFiles(MODEL_ACCEPT, true);
+                    if (files.length) await importModelFiles(files);
                   }}
                 >
                   <Upload size={16} />

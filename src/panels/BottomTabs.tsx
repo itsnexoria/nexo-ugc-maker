@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Eye, EyeOff, ImagePlus, Lock, LockOpen, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
+import { BrushCleaning, Eye, EyeOff, ImagePlus, Lock, LockOpen, Plus, RefreshCw, Trash2, Upload } from 'lucide-react';
 import { AssetGrid, ImportModelButton } from '../components/AssetGrid';
 import { MaterialControls } from '../components/MaterialControls';
 import { MaterialPreview } from '../components/MaterialPreview';
@@ -9,7 +9,7 @@ import { ACCESSORY_CATEGORIES, CATEGORY_LABELS, CATEGORY_ORDER } from '../assets
 import { MATERIAL_PRESETS } from '../assets/materials';
 import { applyMaterialPresetToSelection } from '../editor/library';
 import { pickFiles, textureFromFile, uploadTexture } from '../editor/importers';
-import { useEditor } from '../store/editor';
+import { unusedTextureIds, useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { SHAPE_LABELS, getModelGeometry, getPrimitiveGeometry, triangleCount } from '../utils/geometry';
 import type { AssetCategory } from '../types';
@@ -137,6 +137,7 @@ export function TexturesTab() {
   const rename = useEditor((s) => s.renameTexture);
   const del = useEditor((s) => s.deleteTexture);
   const replace = useEditor((s) => s.replaceTexture);
+  const deleteUnused = useEditor((s) => s.deleteUnusedTextures);
   const askConfirm = useUI((s) => s.askConfirm);
   const toast = useUI((s) => s.toast);
   const [editing, setEditing] = useState<string | null>(null);
@@ -148,6 +149,7 @@ export function TexturesTab() {
   }, [objects]);
   const sel = selectedId ? objects[selectedId] : null;
   const canApply = !!sel && sel.kind !== 'group';
+  const unusedCount = useMemo(() => unusedTextureIds(objects, textures).length, [objects, textures]);
 
   return (
     <div className="tex-tab">
@@ -161,7 +163,24 @@ export function TexturesTab() {
         >
           <Upload size={14} /> Upload texture
         </button>
-        <span className="hint">PNG, JPG or WebP. You can also drop images on the viewport. Roblox accepts up to 1024×1024.</span>
+        {unusedCount > 0 && (
+          <button
+            className="btn"
+            title="Delete library textures that no part uses"
+            onClick={() =>
+              askConfirm({
+                title: `Delete ${unusedCount} unused texture${unusedCount === 1 ? '' : 's'}?`,
+                body: 'These textures are in the library but no part uses them. Your model is not affected. Starter textures can be added again from the Assets tab. This cannot be undone.',
+                confirmLabel: 'Delete unused',
+                danger: true,
+                onConfirm: () => toast('success', `Deleted ${deleteUnused()} unused texture${unusedCount === 1 ? '' : 's'}`),
+              })
+            }
+          >
+            <BrushCleaning size={14} /> Clean up unused ({unusedCount})
+          </button>
+        )}
+        <span className="hint">PNG, JPG or WebP. Bigger than 1024×1024 is scaled down automatically. You can also drop images on the viewport.</span>
       </div>
       {textures.length === 0 ? (
         <div className="empty">

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   FlipHorizontal2,
+  BrushCleaning,
   Image as ImageIcon,
   Layers as LayersIcon,
   Lock,
@@ -34,7 +35,7 @@ import { ColorField, NumberField, SliderField } from '../components/ui/Fields';
 import { Section } from '../components/ui/Section';
 import { Tip } from '../components/ui/Tooltip';
 import { importClothingTemplate, pickFiles, uploadClothingImage } from '../editor/importers';
-import { selectedLayer, useClothing, type ClothingTool } from '../store/clothing';
+import { selectedLayer, unusedClothingImageIds, useClothing, type ClothingTool } from '../store/clothing';
 import { useUI } from '../store/ui';
 import { translateClip } from '../store/clothing';
 import type { BlendMode, ClothingKind, ClothingLayer, PatternId, ShapeType } from '../types';
@@ -769,7 +770,11 @@ export function ImagesTab() {
   const images = useClothing((s) => s.images);
   const addLayer = useClothing((s) => s.addLayer);
   const remove = useClothing((s) => s.removeImage);
+  const designs = useClothing((s) => s.designs);
+  const removeUnused = useClothing((s) => s.removeUnusedImages);
   const askConfirm = useUI((s) => s.askConfirm);
+  const toast = useUI((s) => s.toast);
+  const unused = useMemo(() => new Set(unusedClothingImageIds(designs, images)), [designs, images]);
   return (
     <div className="tex-tab">
       <div className="tex-actions">
@@ -792,6 +797,23 @@ export function ImagesTab() {
         >
           <FileUp size={14} /> Import existing clothing PNG
         </button>
+        {unused.size > 0 && (
+          <button
+            className="btn"
+            title="Delete library images that no layer uses"
+            onClick={() =>
+              askConfirm({
+                title: `Delete ${unused.size} unused image${unused.size === 1 ? '' : 's'}?`,
+                body: 'These images are in the library but no layer uses them. Your designs are not affected. You can undo this.',
+                confirmLabel: 'Delete unused',
+                danger: true,
+                onConfirm: () => toast('success', `Deleted ${removeUnused()} unused image${unused.size === 1 ? '' : 's'}`),
+              })
+            }
+          >
+            <BrushCleaning size={14} /> Clean up unused ({unused.size})
+          </button>
+        )}
         <span className="hint">PNG, JPG, WebP or GIF. You can also drop pictures on the editor.</span>
       </div>
       {images.length === 0 ? (
@@ -808,6 +830,7 @@ export function ImagesTab() {
                 <div className="truncate tex-name">{i.name}</div>
                 <div className="hint num">
                   {i.width}×{i.height}
+                  {unused.has(i.id) ? ' · unused' : ''}
                 </div>
                 <div className="row" style={{ gap: 4 }}>
                   <button className="btn sm" onClick={() => addLayer('image', { image: i })}>

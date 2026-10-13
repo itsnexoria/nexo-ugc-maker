@@ -26,6 +26,8 @@ import { useViewport } from './store/viewport';
 import { Tour, tourSeen } from './components/Tour';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Viewport } from './viewport/Viewport';
+import { SaveBanner } from './components/SaveBanner';
+import { useStorageHealth } from './utils/storageHealth';
 
 function Workspace() {
   const preview = useViewport((s) => s.previewMode);
@@ -104,6 +106,7 @@ export default function App() {
       }
       if (!cancelled) useEditor.getState().setScreen('home');
     })();
+    void useStorageHealth.getState().check(true);
     const stop = startAutosave();
     const onHide = () => {
       if (document.visibilityState === 'hidden' && useEditor.getState().project.saveStatus === 'unsaved' && useSettings.getState().autoSave) void saveNow(false);
@@ -150,6 +153,7 @@ export default function App() {
       {modal === 'about' && <AboutModal />}
       {modal === 'privacy' && <PrivacyModal />}
       {modal === 'r15' && <R15FitModal />}
+      <SaveBanner />
       <Tour />
       <ConfirmHost />
       <PromptHost />

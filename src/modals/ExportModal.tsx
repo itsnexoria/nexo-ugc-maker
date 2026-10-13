@@ -7,6 +7,11 @@ import { useUI } from '../store/ui';
 import { downloadBlob, safeFilename } from '../utils/download';
 import { primaryRoot, runExport, UNIT_SCALE, type ExportFormat, type ExportUnits } from '../utils/exporter';
 import { robloxAttachmentFor } from '../assets/avatar';
+import { LIMITS } from '../utils/validation';
+import { accessoryReadme, buildAccessoryBundle, validationReportText } from '../utils/bundle';
+import { stringifyProjectFile } from '../utils/projectFile';
+import { serializeCurrentProject } from '../store/serialize';
+import { viewportApi } from '../viewport/api';
 import type { AtlasSize } from '../utils/bake';
 
 const FORMATS: { id: ExportFormat; name: string; note: string }[] = [
@@ -36,7 +41,7 @@ export function ExportModal() {
   const blocking = report.errors > 0;
   const issues = useMemo(() => report.results.filter((r) => r.severity === 'error' || r.severity === 'warn'), [report]);
 
-  const doExport = async () => {
+  const doExport = async (asBundle = false) => {
     setBusy(true);
     setError(null);
     try {
@@ -45,8 +50,39 @@ export function ExportModal() {
         { objects: s.objects, order: s.order, layers: s.layers, textures: s.textures, models: s.models, rig: s.rig },
         { format, units, includeAvatar: avatar, includeHidden: hidden, filename: filename.trim() || 'accessory', merge, atlasSize: atlas, centerOnAttachment: center },
       );
-      downloadBlob(result.blob, result.filename);
-      toast('success', `Exported ${result.filename} (${merge ? 'one mesh from ' : ''}${result.parts} parts, ${result.triangles.toLocaleString()} triangles)`);
+      if (asBundle) {
+        const name = safeFilename(filename.trim() || projectName);
+        const checks = report.results.map((r) => ({ severity: r.severity, title: r.title, detail: r.detail }));
+        const readme = accessoryReadme({
+          name: projectName,
+          format,
+          units,
+          merged: merge,
+          atlasSize: atlas,
+          attachment: result.attachment,
+          centredOnAttachment: center,
+          parts: result.parts,
+          triangles: result.triangles,
+          maxTriangles: LIMITS.maxTriangles,
+          checks,
+          files: [`model/${result.filename.endsWith('.zip') ? '(OBJ, MTL and textures)' : result.filename}`],
+          appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev',
+          date: new Date().toISOString().slice(0, 10),
+        });
+        const blob = await buildAccessoryBundle({
+          model: result,
+          readme,
+          report: validationReportText(projectName, checks),
+          projectJson: stringifyProjectFile(projectName, serializeCurrentProject()),
+          projectName: name,
+          preview: viewportApi.captureThumbnail(),
+        });
+        downloadBlob(blob, `${name}-upload-bundle.zip`);
+        toast('success', `Exported ${name}-upload-bundle.zip (model, checklist, validation report and project backup)`);
+      } else {
+        downloadBlob(result.blob, result.filename);
+        toast('success', `Exported ${result.filename} (${merge ? 'one mesh from ' : ''}${result.parts} parts, ${result.triangles.toLocaleString()} triangles)`);
+      }
       if (result.attachment) useUI.getState().log('info', `Suggested Roblox attachment: ${result.attachment}`);
       close();
     } catch (e) {
@@ -69,7 +105,10 @@ export function ExportModal() {
           <button className="btn" onClick={close}>
             Cancel
           </button>
-          <button className="btn primary" onClick={doExport} disabled={busy}>
+          <button className="btn" onClick={() => void doExport(true)} disabled={busy} title="A ZIP with the model, a README checklist, the validation report and a project backup">
+            Upload bundle (ZIP)
+          </button>
+          <button className="btn primary" onClick={() => void doExport(false)} disabled={busy}>
             {busy ? 'Exporting…' : blocking ? 'Export anyway' : `Export ${format.toUpperCase()}`}
           </button>
         </>

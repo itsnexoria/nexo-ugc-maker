@@ -146,7 +146,7 @@ function mtlFor(name: string, m: MaterialProps, texFile: string | null): string 
   const ns = Math.round(Math.pow(1 - m.roughness, 2) * 900 + 10);
   const ks = 0.04 + m.metalness * 0.9;
   const lines = [
-    `newmtl ${name}`,
+    `newmtl ${name.replace(/\s+/g, "_")}`,
     `Kd ${c.r.toFixed(4)} ${c.g.toFixed(4)} ${c.b.toFixed(4)}`,
     `Ks ${ks.toFixed(3)} ${ks.toFixed(3)} ${ks.toFixed(3)}`,
     `Ke ${e.r.toFixed(4)} ${e.g.toFixed(4)} ${e.b.toFixed(4)}`,
@@ -170,7 +170,7 @@ export function writeObj(parts: ObjPart[], mtlName: string): string {
     const uv = g.attributes.uv;
     const normalMatrix = new THREE.Matrix3().getNormalMatrix(p.matrix);
     const flip = p.matrix.determinant() < 0;
-    out.push(`o ${p.name}`, `usemtl ${p.materialName}`);
+    out.push(`o ${p.name.replace(/\s+/g, '_') || 'part'}`, `usemtl ${p.materialName.replace(/\s+/g, '_')}`);
     for (let i = 0; i < pos.count; i++) {
       v.fromBufferAttribute(pos, i).applyMatrix4(p.matrix);
       out.push(`v ${v.x.toFixed(5)} ${v.y.toFixed(5)} ${v.z.toFixed(5)}`);

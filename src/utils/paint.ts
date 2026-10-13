@@ -12,11 +12,24 @@ export const usePaintRev = create<{ rev: number; bump: () => void }>((set) => ({
 const rasters = new Map<string, IncrementalPaint>();
 const images = new Map<string, { url: string; el: HTMLImageElement | null }>();
 
+const MAX_CACHED_IMAGES = 12;
+
 function loadImage(url: string): HTMLImageElement | null {
   const hit = images.get(url);
-  if (hit) return hit.el;
+  if (hit) {
+    // keep the most recently used last, so the oldest entry is the one that gets dropped
+    images.delete(url);
+    images.set(url, hit);
+    return hit.el;
+  }
   const entry = { url, el: null as HTMLImageElement | null };
   images.set(url, entry);
+  // the keys are whole data URLs (megabytes each), so the cache must not grow without limit
+  while (images.size > MAX_CACHED_IMAGES) {
+    const oldest = images.keys().next().value;
+    if (oldest === undefined) break;
+    images.delete(oldest);
+  }
   const el = new Image();
   el.onload = () => {
     entry.el = el;
@@ -64,6 +77,12 @@ export function paintCanvasFor(o: SceneObject, textures: TextureAsset[]): HTMLCa
 
 export function forgetPaint(id: string): void {
   rasters.delete(id);
+}
+
+/** Frees every painted-part raster and decoded texture (called when another project is opened). */
+export function clearPaintCaches(): void {
+  rasters.clear();
+  images.clear();
 }
 
 export function emptyPaint(res: PaintData['res'] = 256): PaintData {

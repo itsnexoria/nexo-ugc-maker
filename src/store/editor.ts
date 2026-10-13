@@ -96,6 +96,8 @@ export interface EditorState {
   // scene editing (all undoable)
   addPrimitive: (kind: Exclude<ShapeKind, 'group' | 'imported'>) => string;
   addImported: (model: ModelAsset, name: string) => string;
+  /** Adds a model that came with several materials: one part per material under a group (or a single part). Returns the selected id. */
+  addImportedParts: (name: string, parts: { model: ModelAsset; name: string; material: MaterialProps }[], textures: TextureAsset[]) => string;
   addAccessory: (spec: PartSpec, slot: SlotId) => string;
   updateObject: (id: string, patch: Partial<SceneObject>, key?: string, label?: string) => void;
   setTransform: (id: string, patch: Partial<Pick<SceneObject, 'position' | 'rotation' | 'scale'>>, key?: string) => void;
@@ -129,6 +131,8 @@ export interface EditorState {
 
   // library data (not part of undo)
   addTexture: (t: TextureAsset) => void;
+  /** Removes every library texture no part uses. Returns how many were removed (not part of undo history). */
+  deleteUnusedTextures: () => number;
   replaceTexture: (id: string, t: Pick<TextureAsset, 'dataUrl' | 'width' | 'height' | 'name'>) => void;
   renameTexture: (id: string, name: string) => void;
   deleteTexture: (id: string) => void;
@@ -140,6 +144,13 @@ export interface EditorState {
 }
 
 const emptyInfo: ProjectInfo = { id: '', name: 'Untitled', createdAt: 0, saveStatus: 'saved', lastSavedAt: null };
+
+/** Library textures that no part's material uses. */
+export function unusedTextureIds(objects: Record<string, SceneObject>, textures: TextureAsset[]): string[] {
+  const used = new Set<string>();
+  for (const o of Object.values(objects)) if (o.material.textureId) used.add(o.material.textureId);
+  return textures.filter((t) => !used.has(t.id)).map((t) => t.id);
+}
 
 export const useEditor = create<EditorState>((set, get) => {
   const snapshot = (): Snapshot => {
@@ -335,6 +346,51 @@ export const useEditor = create<EditorState>((set, get) => {
       commit(`Imported mesh "${name}" (${model.triangles} triangles)`, { objects, order });
       set({ selectedId: id, selectedAvatarPart: null });
       return id;
+    },
+
+    addImportedParts: (name, parts, textures) => {
+      const { parentId, extra } = ensureAccessoryRoot();
+      const s = get();
+      set((st) => ({
+        models: { ...st.models, ...Object.fromEntries(parts.map((p) => [p.model.id, p.model])) },
+        textures: [...st.textures, ...textures.filter((t) => !st.textures.some((x) => x.id === t.id))],
+      }));
+      const objects = { ...(extra?.objects ?? s.objects) };
+      const order = [...(extra?.order ?? s.order)];
+      const layerId = s.layers[0]?.id ?? 'layer_main';
+      const make = (id: string, nm: string, over: Partial<SceneObject>): SceneObject => ({
+        id,
+        name: uniqueName(nm, objects),
+        kind: 'imported',
+        parentId,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        material: { ...DEFAULT_MATERIAL },
+        visible: true,
+        locked: false,
+        layerId,
+        ...over,
+      });
+      let selected: string;
+      if (parts.length === 1) {
+        selected = uid('obj');
+        objects[selected] = make(selected, name, { modelId: parts[0].model.id, position: [0, 0.6, 0], material: parts[0].material });
+        order.push(selected);
+      } else {
+        selected = uid('obj');
+        objects[selected] = make(selected, name, { kind: 'group', position: [0, 0.6, 0] });
+        order.push(selected);
+        for (const p of parts) {
+          const id = uid('obj');
+          objects[id] = make(id, p.name, { modelId: p.model.id, parentId: selected, material: p.material });
+          order.push(id);
+        }
+      }
+      const tris = parts.reduce((n, p) => n + p.model.triangles, 0);
+      commit(`Imported \"${name}\" (${parts.length} material${parts.length === 1 ? '' : 's'}, ${tris} triangles)`, { objects, order });
+      set({ selectedId: selected, selectedAvatarPart: null });
+      return selected;
     },
 
     addAccessory: (spec, slot) => {
@@ -659,6 +715,13 @@ export const useEditor = create<EditorState>((set, get) => {
       set((st) => ({ textures: st.textures.filter((t) => t.id !== id) }));
       if (touched) commit('Deleted texture', { objects });
       else set((st) => ({ revision: st.revision + 1, project: { ...st.project, saveStatus: 'unsaved' } }));
+    },
+    deleteUnusedTextures: () => {
+      const s = get();
+      const gone = new Set(unusedTextureIds(s.objects, s.textures));
+      if (!gone.size) return 0;
+      set((st) => ({ textures: st.textures.filter((t) => !gone.has(t.id)), revision: st.revision + 1, project: { ...st.project, saveStatus: 'unsaved' } }));
+      return gone.size;
     },
     addModel: (m) => set((s) => ({ models: { ...s.models, [m.id]: m } })),
 

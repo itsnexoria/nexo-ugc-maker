@@ -30,6 +30,23 @@ export interface HistoryEntry {
   designs: Designs;
   /** what the action that followed this state was */
   label: string;
+  /** The image library as it was, kept only by actions that change the library (deleting images), so undo can bring them back */
+  images?: ClothingImage[];
+}
+
+const KINDS: ClothingKind[] = ['shirt', 'pants', 'tshirt'];
+
+/** Images in the library that no layer in any design uses. */
+export function unusedClothingImageIds(designs: Record<ClothingKind, ClothingLayer[]>, images: ClothingImage[]): string[] {
+  const used = new Set<string>();
+  for (const k of KINDS) for (const l of designs[k] ?? []) if (l.type === 'image') used.add(l.imageId);
+  return images.filter((i) => !used.has(i.id)).map((i) => i.id);
+}
+
+/** The design tab an undo/redo step changed, preferring the one already on screen. */
+function changedKind(a: Record<ClothingKind, ClothingLayer[]>, b: Record<ClothingKind, ClothingLayer[]>, active: ClothingKind): ClothingKind | null {
+  if (a[active] !== b[active]) return active;
+  return KINDS.find((k) => a[k] !== b[k]) ?? null;
 }
 
 /** Where a point lands on the opposite side of the body (left/right mirror), or null off-template. */
@@ -113,6 +130,10 @@ export interface ClothingState {
 
   addImage: (img: ClothingImage) => void;
   removeImage: (id: string) => void;
+  /** Deletes every image no layer uses (one undo step). Returns how many were removed. */
+  removeUnusedImages: () => number;
+  /** Swaps in smaller versions of library images without touching layers or history. */
+  replaceImages: (updates: { id: string; dataUrl: string; width: number; height: number }[]) => void;
 
   undo: () => void;
   redo: () => void;
@@ -138,14 +159,17 @@ function keepSelection(s: ClothingState, designs: Designs) {
 export const useClothing = create<ClothingState>((set, get) => {
   const touch = () => useEditor.getState().touch();
 
-  const commit = (label: string, designs: Designs, key?: string, kinds: ClothingKind[] = ['shirt', 'pants', 'tshirt']) => {
+  const commit = (label: string, designs: Designs, key?: string, kinds: ClothingKind[] = ['shirt', 'pants', 'tshirt'], images?: ClothingImage[]) => {
     const s = get();
     const now = Date.now();
-    const merge = !!key && s.lastKey === key && now - s.lastTime < MERGE_WINDOW_MS && s.past.length > 0;
-    const past = merge ? s.past : [...s.past, { designs: s.designs, label }].slice(-HISTORY_LIMIT);
+    // A brush stroke is one undo step however long the pointer rests mid-drag; everything else merges by time.
+    const perStroke = !!key && key.startsWith('stroke:');
+    const merge = !!key && !images && s.lastKey === key && (perStroke || now - s.lastTime < MERGE_WINDOW_MS) && s.past.length > 0;
+    const entry: HistoryEntry = { designs: s.designs, label, ...(images ? { images: s.images } : {}) };
+    const past = merge ? s.past : [...s.past, entry].slice(-HISTORY_LIMIT);
     const designVersion = { ...s.designVersion };
     for (const k of kinds) designVersion[k] = s.designVersion[k] + 1;
-    set({ designs, past, future: [], lastKey: key ?? null, lastTime: now, revision: s.revision + 1, designVersion });
+    set({ designs, past, future: [], lastKey: key ?? null, lastTime: now, revision: s.revision + 1, designVersion, ...(images ? { images, imageRev: s.imageRev + 1 } : {}) });
     if (!merge) useUI.getState().log('info', label);
     touch();
   };
@@ -557,25 +581,50 @@ export const useClothing = create<ClothingState>((set, get) => {
     removeImage: (id) => {
       const s = get();
       const designs: Designs = { shirt: [], pants: [], tshirt: [] };
-      for (const k of Object.keys(s.designs) as ClothingKind[]) designs[k] = s.designs[k].filter((l) => !(l.type === 'image' && l.imageId === id));
-      set({ images: s.images.filter((i) => i.id !== id) });
-      commit('Removed image', designs);
+      for (const k of KINDS) designs[k] = s.designs[k].filter((l) => !(l.type === 'image' && l.imageId === id));
+      // the library change goes through history, so undo restores the image together with its layers
+      commit('Removed image', designs, undefined, KINDS, s.images.filter((i) => i.id !== id));
+      set((st) => keepSelection(st, designs));
+    },
+
+    removeUnusedImages: () => {
+      const s = get();
+      const gone = new Set(unusedClothingImageIds(s.designs, s.images));
+      if (!gone.size) return 0;
+      commit(`Removed ${gone.size} unused image${gone.size === 1 ? '' : 's'}`, s.designs, undefined, [], s.images.filter((i) => !gone.has(i.id)));
+      return gone.size;
+    },
+
+    replaceImages: (updates) => {
+      if (!updates.length) return;
+      const byId = new Map(updates.map((u) => [u.id, u]));
+      set((s) => ({
+        images: s.images.map((i) => (byId.has(i.id) ? { ...i, ...byId.get(i.id)! } : i)),
+        imageRev: s.imageRev + 1,
+        revision: s.revision + 1,
+      }));
+      touch();
     },
 
     undo: () => {
       const s = get();
       const prev = s.past[s.past.length - 1];
       if (!prev) return;
+      const kind = changedKind(s.designs, prev.designs, s.activeKind);
+      const switched = !!kind && kind !== s.activeKind;
       set({
         designs: prev.designs,
         past: s.past.slice(0, -1),
-        future: [{ designs: s.designs, label: prev.label }, ...s.future].slice(0, HISTORY_LIMIT),
+        future: [{ designs: s.designs, label: prev.label, ...(prev.images ? { images: s.images } : {}) }, ...s.future].slice(0, HISTORY_LIMIT),
         lastKey: null,
         revision: s.revision + 1,
         designVersion: { shirt: s.designVersion.shirt + 1, pants: s.designVersion.pants + 1, tshirt: s.designVersion.tshirt + 1 },
+        ...(prev.images ? { images: prev.images, imageRev: s.imageRev + 1 } : {}),
         ...keepSelection(s, prev.designs),
+        ...(switched ? { activeKind: kind!, selectedId: null, selectedIds: [] } : {}),
       });
       useUI.getState().log('info', `Undo: ${prev.label}`);
+      if (switched) useUI.getState().toast('info', `Undid “${prev.label}” on the ${TEMPLATES[kind!].label.toLowerCase()} tab`);
       touch();
     },
 
@@ -583,16 +632,21 @@ export const useClothing = create<ClothingState>((set, get) => {
       const s = get();
       const next = s.future[0];
       if (!next) return;
+      const kind = changedKind(s.designs, next.designs, s.activeKind);
+      const switched = !!kind && kind !== s.activeKind;
       set({
         designs: next.designs,
-        past: [...s.past, { designs: s.designs, label: next.label }].slice(-HISTORY_LIMIT),
+        past: [...s.past, { designs: s.designs, label: next.label, ...(next.images ? { images: s.images } : {}) }].slice(-HISTORY_LIMIT),
         future: s.future.slice(1),
         lastKey: null,
         revision: s.revision + 1,
         designVersion: { shirt: s.designVersion.shirt + 1, pants: s.designVersion.pants + 1, tshirt: s.designVersion.tshirt + 1 },
+        ...(next.images ? { images: next.images, imageRev: s.imageRev + 1 } : {}),
         ...keepSelection(s, next.designs),
+        ...(switched ? { activeKind: kind!, selectedId: null, selectedIds: [] } : {}),
       });
       useUI.getState().log('info', `Redo: ${next.label}`);
+      if (switched) useUI.getState().toast('info', `Redid “${next.label}” on the ${TEMPLATES[kind!].label.toLowerCase()} tab`);
       touch();
     },
   };

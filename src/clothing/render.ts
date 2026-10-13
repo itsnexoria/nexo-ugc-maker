@@ -214,6 +214,11 @@ export function forgetPaintLayer(id: string): void {
   paintRasters.delete(id);
 }
 
+/** Frees every paint-layer raster (called when another project is opened). */
+export function clearClothingCaches(): void {
+  paintRasters.clear();
+}
+
 /** Cached picture of one layer (unclipped, full opacity). Re-made only when that layer object changes. */
 const rasterCache = new WeakMap<ClothingLayer, { key: string; canvas: HTMLCanvasElement }>();
 

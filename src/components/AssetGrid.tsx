@@ -5,7 +5,7 @@ import { MATERIAL_PRESETS } from '../assets/materials';
 import { BUILTIN_TEXTURES } from '../assets/textures';
 import { SLOT_LABELS } from '../assets/avatar';
 import { builtinThumb, addBuiltinTexture, applyMaterialPresetToSelection } from '../editor/library';
-import { importModelFile, pickFiles, uploadTexture } from '../editor/importers';
+import { MODEL_ACCEPT, importModelFiles, pickFiles, uploadTexture } from '../editor/importers';
 import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { useUserAssets } from '../store/userAssets';
@@ -161,8 +161,8 @@ export function ImportModelButton({ onDone }: { onDone?: () => void }) {
     <button
       className="btn"
       onClick={async () => {
-        const [f] = await pickFiles('.obj,.glb,.gltf');
-        if (f && (await importModelFile(f))) onDone?.();
+        const files = await pickFiles(MODEL_ACCEPT, true);
+        if (files.length && (await importModelFiles(files))) onDone?.();
       }}
     >
       <Upload size={14} /> Import model

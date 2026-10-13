@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, FileUp, FolderOpen, Pencil, Trash2 } from 'lucide-react';
+import { Copy, FileUp, FolderOpen, History, Pencil, Trash2 } from 'lucide-react';
 import { TEMPLATES, type ProjectTemplate } from '../assets/sample';
 import { Modal } from '../components/ui/Overlays';
 import { ProjectThumb } from '../components/ProjectThumb';
@@ -91,6 +91,10 @@ export async function importProjectFromDisk(): Promise<ProjectMeta | null> {
   try {
     const meta = await projects.importProjectFile(await file.text());
     useUI.getState().toast('success', `Imported “${meta.name}”`);
+    if (meta.warnings.length) {
+      useUI.getState().toast('warn', `${meta.warnings.length} problem${meta.warnings.length === 1 ? '' : 's'} in the file were repaired. ${meta.warnings.slice(0, 2).join(' ')}${meta.warnings.length > 2 ? ' …' : ''}`);
+      for (const w of meta.warnings) useUI.getState().log('warn', `Import repair: ${w}`);
+    }
     return meta;
   } catch (e) {
     useUI.getState().toast('error', e instanceof Error ? e.message : 'Could not import this file.');
@@ -102,6 +106,14 @@ export function ProjectActions({ meta, onChanged, onOpen }: { meta: ProjectMeta;
   const askText = useUI((s) => s.askText);
   const askConfirm = useUI((s) => s.askConfirm);
   const toast = useUI((s) => s.toast);
+  const [backup, setBackup] = useState<{ takenAt: number; updatedAt: number } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void projects.backupInfo(meta.id).then((b) => live && setBackup(b));
+    return () => {
+      live = false;
+    };
+  }, [meta.id, meta.updatedAt]);
   return (
     <div className="proj-actions">
       <button className="icon-btn sm" title="Open" aria-label={`Open ${meta.name}`} onClick={onOpen}>
@@ -138,6 +150,31 @@ export function ProjectActions({ meta, onChanged, onOpen }: { meta: ProjectMeta;
       >
         <Copy size={13} />
       </button>
+      {backup && (
+        <button
+          className="icon-btn sm"
+          title={`Restore the previous save (${timeAgo(backup.updatedAt)})`}
+          aria-label={`Restore previous save of ${meta.name}`}
+          onClick={() =>
+            askConfirm({
+              title: `Restore the previous save of “${meta.name}”?`,
+              body: `This brings back the version from ${timeAgo(backup.updatedAt)}. Your current version is kept as the previous save, so you can switch back the same way.`,
+              confirmLabel: 'Restore',
+              onConfirm: async () => {
+                try {
+                  const m = await projects.restorePreviousSave(meta.id);
+                  toast(m ? 'success' : 'warn', m ? `Restored “${meta.name}” to the version from ${timeAgo(backup.updatedAt)}` : 'No previous save was found.');
+                } catch (e) {
+                  toast('error', `Could not restore: ${e instanceof Error ? e.message : 'storage error'}`);
+                }
+                onChanged();
+              },
+            })
+          }
+        >
+          <History size={13} />
+        </button>
+      )}
       <button
         className="icon-btn sm"
         title="Delete"

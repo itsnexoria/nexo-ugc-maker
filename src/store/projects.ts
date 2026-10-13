@@ -2,6 +2,7 @@ import type { ProjectData, ProjectMeta } from '../types';
 import { buildProject, type ProjectTemplate } from '../assets/sample';
 import { uid } from '../utils/ids';
 import * as db from './db';
+import { parseProjectFileText, stringifyProjectFile } from '../utils/projectFile';
 
 const SEEDED_KEY = 'nexo-ugc-seeded-v1';
 
@@ -10,6 +11,13 @@ export function metaFrom(id: string, name: string, createdAt: number, data: Proj
     ? (['shirt', 'pants', 'tshirt'] as const).reduce((n, k) => n + (data.clothing!.designs[k]?.length ?? 0), 0)
     : Object.values(data.objects).filter((o) => o.kind !== 'group').length;
   return { id, kind: data.clothing ? 'clothing' : 'accessory', name, createdAt, updatedAt: Date.now(), objectCount: count, thumbnail };
+}
+
+/** Refuses to overwrite a good save with something that is obviously not a project. */
+function assertSaveable(data: ProjectData): void {
+  if (!data || typeof data !== 'object' || !data.objects || !Array.isArray(data.order) || !Array.isArray(data.layers)) {
+    throw new Error('The project data looks incomplete, so the last good save was kept.');
+  }
 }
 
 export async function listProjects(): Promise<ProjectMeta[]> {
@@ -30,10 +38,11 @@ export async function saveProject(
   thumbnail: string | null,
 ): Promise<ProjectMeta> {
   // keep the previous thumbnail if a new one could not be captured
+  assertSaveable(data);
   const prev = thumbnail ? null : await db.getMeta(id);
   const meta = metaFrom(id, name, createdAt, data, thumbnail ?? prev?.thumbnail ?? null);
-  await db.putData(id, data);
-  await db.putMeta(meta);
+  // one transaction: data, dashboard entry and (when due) the rolling backup land together or not at all
+  await db.putProject(meta, data);
   return meta;
 }
 
@@ -41,8 +50,7 @@ export async function createProject(name: string, template: ProjectTemplate): Pr
   const data = buildProject(template);
   const id = uid('proj');
   const meta = metaFrom(id, name, Date.now(), data, null);
-  await db.putData(id, data);
-  await db.putMeta(meta);
+  await db.putProject(meta, data);
   return { meta, data };
 }
 
@@ -52,8 +60,7 @@ export async function duplicateProject(id: string): Promise<ProjectMeta | null> 
   const nid = uid('proj');
   const data = JSON.parse(JSON.stringify(src.data)) as ProjectData;
   const meta: ProjectMeta = { ...src.meta, id: nid, name: `${src.meta.name} copy`, createdAt: Date.now(), updatedAt: Date.now() };
-  await db.putData(nid, data);
-  await db.putMeta(meta);
+  await db.putProject(meta, data);
   return meta;
 }
 
@@ -68,7 +75,14 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 /** First run: add the Cyber Crown sample once so the dashboard is never empty. */
-export async function seedIfFirstRun(): Promise<void> {
+let seeding: Promise<void> | null = null;
+export function seedIfFirstRun(): Promise<void> {
+  // one run at a time, so React StrictMode's double effect cannot create two sample projects
+  if (!seeding) seeding = seedOnce().finally(() => (seeding = null));
+  return seeding;
+}
+
+async function seedOnce(): Promise<void> {
   let seeded = false;
   try {
     seeded = localStorage.getItem(SEEDED_KEY) === '1';
@@ -87,50 +101,40 @@ export async function seedIfFirstRun(): Promise<void> {
 
 // ---------- project files (backup / sharing) ----------
 
-export interface ProjectFile {
-  app: 'nexo-ugc-studio';
-  version: 1;
-  name: string;
-  data: ProjectData;
-}
-
 export function toProjectFile(name: string, data: ProjectData): string {
-  const file: ProjectFile = { app: 'nexo-ugc-studio', version: 1, name, data };
-  return JSON.stringify(file);
+  return stringifyProjectFile(name, data);
 }
 
-export function parseProjectFile(text: string): { name: string; data: ProjectData } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('This file is not valid JSON.');
-  }
-  const f = parsed as Partial<ProjectFile>;
-  if (f?.app !== 'nexo-ugc-studio' || !f.data || typeof f.data !== 'object') {
-    throw new Error('This is not a Nexo UGC Studio project file.');
-  }
-  const d = f.data as ProjectData;
-  if (!d.objects || !Array.isArray(d.order) || !Array.isArray(d.layers)) {
-    throw new Error('The project file is missing scene data.');
-  }
-  return {
-    name: String(f.name ?? 'Imported project').slice(0, 60),
-    data: { ...d, textures: d.textures ?? [], models: d.models ?? {}, rig: d.rig === 'R15' ? 'R15' : 'R6' },
-  };
+export function parseProjectFile(text: string): { name: string; data: ProjectData; warnings: string[] } {
+  const { name, data, warnings } = parseProjectFileText(text);
+  return { name, data, warnings };
 }
 
-export async function importProjectFile(text: string): Promise<ProjectMeta> {
-  const { name, data } = parseProjectFile(text);
+export async function importProjectFile(text: string): Promise<ProjectMeta & { warnings: string[] }> {
+  const { name, data, warnings } = parseProjectFile(text);
   const id = uid('proj');
   const meta = metaFrom(id, name, Date.now(), data, null);
-  await db.putData(id, data);
-  await db.putMeta(meta);
-  return meta;
+  await db.putProject(meta, data);
+  return { ...meta, warnings };
 }
 
 /** Stores a thumbnail without changing the project's "updated" time. */
 export async function setThumbnail(id: string, thumbnail: string): Promise<void> {
   const meta = await db.getMeta(id);
   if (meta) await db.putMeta({ ...meta, thumbnail });
+}
+
+// ---------- rolling backup ----------
+
+export async function backupInfo(id: string): Promise<{ takenAt: number; updatedAt: number } | null> {
+  try {
+    return await db.getBackupInfo(id);
+  } catch {
+    return null;
+  }
+}
+
+/** Swaps the project with its previous good save. The current version becomes the backup, so this can be reversed. */
+export async function restorePreviousSave(id: string): Promise<ProjectMeta | null> {
+  return db.restoreBackup(id);
 }

@@ -297,3 +297,37 @@
   border: 1px solid var(--border);
   border-radius: var(--r);
 }
+
+/* save / storage banner */
+.save-banner {
+  position: fixed;
+  top: 52px; /* just under the top bar */
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 985; /* above the guided tour, below nothing important: a failed save must be seen */
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(760px, calc(100vw - 20px));
+  padding: 8px 10px 8px 12px;
+  background: var(--raised);
+  border: 1px solid var(--border-strong);
+  border-left: 3px solid var(--warn);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  flex-wrap: wrap;
+}
+.save-banner.err {
+  border-left-color: var(--err);
+}
+.save-banner-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 180px;
+  flex: 1 1 240px;
+}
+.save-banner-text span {
+  color: var(--text-dim);
+  font-size: 12px;
+}
