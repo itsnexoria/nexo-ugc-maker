@@ -3,7 +3,10 @@ import { selectedLayer, useClothing } from '../store/clothing';
 import type { ClothingLayer, ImageLayer, ShapeLayer, TextLayer } from '../types';
 import { ensureComposite, canvasFor, getComposite } from './composite';
 import { flushStroke, queueStrokePoint } from './strokeBatch';
+import { fillAt } from './fillTool';
 import { layerBox, pointInBox, type LayerBox } from './render';
+import { effective, effectiveOf, groupIndex } from './groups';
+import { boxBounds, snapMove, snapTargetsFor, unionBounds, type Bounds, type SnapTargets } from './snap';
 import { TEMPLATES } from './templates';
 import { r15JointOffsets } from './mapping';
 import { useEditor } from '../store/editor';
@@ -16,7 +19,7 @@ interface View {
 
 type Drag =
   | { mode: 'pan'; sx: number; sy: number; vx: number; vy: number }
-  | { mode: 'move'; ids: string[]; sx: number; sy: number; lx: number; ly: number }
+  | { mode: 'move'; ids: string[]; sx: number; sy: number; lx: number; ly: number; ax: number; ay: number; start: Bounds | null; targets: SnapTargets }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean }
   | { mode: 'scale'; id: string; cx: number; cy: number; d0: number; w: number; h: number; size: number }
   | { mode: 'rotate'; id: string; cx: number; cy: number; offset: number }
@@ -59,6 +62,8 @@ export function DesignCanvas() {
   const selectedIds = useClothing((s) => s.selectedIds);
   const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const tool = useClothing((s) => s.tool);
+  const snapOn = useClothing((s) => s.snap);
+  const [guides, setGuides] = useState<{ xs: number[]; ys: number[] } | null>(null);
   const showGuides = useClothing((s) => s.showGuides);
   const spec = TEMPLATES[kind];
   const rig = useEditor((s) => s.rig);
@@ -209,7 +214,7 @@ export function DesignCanvas() {
       const many = st.selectedIds.length > 1;
       for (const id of st.selectedIds) {
         const l = st.designs[st.activeKind].find((x) => x.id === id);
-        const box = l && l.visible ? layerBox(l) : null;
+        const box = l && effective(st.designs[st.activeKind], l).visible ? layerBox(l) : null;
         if (!box) continue;
         const { corners, rot } = handlePoints({ ...box });
         ctx.strokeStyle = many ? 'rgba(255,90,98,0.95)' : '#ff3b44';
@@ -245,6 +250,25 @@ export function DesignCanvas() {
       }
     }
 
+    if (guides) {
+      ctx.strokeStyle = '#ff2fd0';
+      ctx.lineWidth = 1 / view.zoom;
+      ctx.setLineDash([3 / view.zoom, 3 / view.zoom]);
+      for (const gx of guides.xs) {
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, spec.height);
+        ctx.stroke();
+      }
+      for (const gy of guides.ys) {
+        ctx.beginPath();
+        ctx.moveTo(0, gy);
+        ctx.lineTo(spec.width, gy);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     if ((tool === 'brush' || tool === 'eraser') && hover.current) {
       const br = useClothing.getState().brush;
       ctx.strokeStyle = tool === 'eraser' ? '#ffffff' : br.color;
@@ -254,7 +278,7 @@ export function DesignCanvas() {
       ctx.stroke();
     }
     ctx.restore();
-  }, [size, view, kind, revision, imageRev, dv, selectedId, selectedIds, marquee, tool, showGuides, spec, bump, rig, calKey]);
+  }, [size, view, kind, revision, imageRev, dv, selectedId, selectedIds, marquee, tool, showGuides, spec, bump, rig, calKey, guides]);
 
   // ---------------------------------------------------------------- interaction
   const hitHandle = (layer: ClothingLayer, x: number, y: number): 'rotate' | 'scale' | null => {
@@ -292,6 +316,10 @@ export function DesignCanvas() {
     if (e.button !== 0) return;
     el.setPointerCapture(e.pointerId);
 
+    if (tool === 'fill') {
+      fillAt(kind, x, y);
+      return;
+    }
     if (tool === 'brush' || tool === 'eraser') {
       if (e.altKey && tool === 'brush') {
         // eyedropper: Alt+click picks the colour under the pointer
@@ -307,7 +335,9 @@ export function DesignCanvas() {
 
     const layers = s.designs[s.activeKind];
     const sel = s.selectedIds.length === 1 ? layers.find((l) => l.id === s.selectedId) : undefined;
-    if (sel && !sel.locked && sel.visible) {
+    const groupsNow = groupIndex(layers);
+    const eff = (l: ClothingLayer) => effectiveOf(l, groupsNow);
+    if (sel && !eff(sel).locked && eff(sel).visible) {
       const h = hitHandle(sel, x, y);
       const box = layerBox(sel);
       if (h && box) {
@@ -324,7 +354,7 @@ export function DesignCanvas() {
     // topmost movable layer under the pointer
     for (let i = layers.length - 1; i >= 0; i--) {
       const l = layers[i];
-      if (!l.visible || l.locked) continue;
+      if (!eff(l).visible || eff(l).locked) continue;
       const b = layerBox(l);
       if (b && pointInBox(b, x, y)) {
         if (additive) {
@@ -334,7 +364,10 @@ export function DesignCanvas() {
         // clicking something already in a multi-selection keeps the selection so the whole group can be dragged
         if (!s.selectedIds.includes(l.id)) s.select(l.id);
         const ids = useClothing.getState().selectedIds;
-        drag.current = { mode: 'move', ids, sx: x, sy: y, lx: x, ly: y };
+        const st = useClothing.getState();
+        const layersNow = st.designs[st.activeKind];
+        const start = unionBounds(layersNow.filter((q) => ids.includes(q.id)).map((q) => layerBox(q)).filter((bx): bx is NonNullable<typeof bx> => !!bx).map(boxBounds));
+        drag.current = { mode: 'move', ids, sx: x, sy: y, lx: x, ly: y, ax: 0, ay: 0, start, targets: snapTargetsFor(st.activeKind, layersNow, new Set(ids)) };
         return;
       }
     }
@@ -372,10 +405,22 @@ export function DesignCanvas() {
     if (d.mode === 'pan') {
       setView((v) => ({ ...v, x: d.vx + (e.clientX - d.sx), y: d.vy + (e.clientY - d.sy) }));
     } else if (d.mode === 'move') {
-      const dx = x - d.lx;
-      const dy = y - d.ly;
-      d.lx = x;
-      d.ly = y;
+      // where the pointer says the layers should be, then (unless Alt is held) pulled onto a nearby guide line
+      let tx = x - d.sx;
+      let ty = y - d.sy;
+      let shown: { xs: number[]; ys: number[] } | null = null;
+      if (s.snap && !e.altKey && d.start) {
+        const moved = { l: d.start.l + tx, r: d.start.r + tx, t: d.start.t + ty, b: d.start.b + ty };
+        const hit = snapMove(moved, d.targets, 6 / view.zoom);
+        tx += hit.dx;
+        ty += hit.dy;
+        if (hit.guideXs.length || hit.guideYs.length) shown = { xs: hit.guideXs, ys: hit.guideYs };
+      }
+      setGuides(shown);
+      const dx = tx - d.ax;
+      const dy = ty - d.ay;
+      d.ax = tx;
+      d.ay = ty;
       if (dx !== 0 || dy !== 0) s.moveLayersBy(d.ids, dx, dy, `${d.ids.join(',')}:drag`);
     } else if (d.mode === 'marquee') {
       d.x1 = x;
@@ -409,8 +454,11 @@ export function DesignCanvas() {
       const y0 = Math.min(dm.y0, dm.y1);
       const y1 = Math.max(dm.y0, dm.y1);
       if (x1 - x0 > 3 || y1 - y0 > 3) {
-        const hit = st.designs[st.activeKind].filter((l) => {
-          const b = l.visible && !l.locked ? layerBox(l) : null;
+        const all = st.designs[st.activeKind];
+        const gi = groupIndex(all);
+        const hit = all.filter((l) => {
+          const e = effectiveOf(l, gi);
+          const b = e.visible && !e.locked ? layerBox(l) : null;
           return !!b && b.cx + b.w / 2 >= x0 && b.cx - b.w / 2 <= x1 && b.cy + b.h / 2 >= y0 && b.cy - b.h / 2 <= y1;
         });
         st.selectMany(dm.add ? [...new Set([...st.selectedIds, ...hit.map((l) => l.id)])] : hit.map((l) => l.id));
@@ -418,6 +466,7 @@ export function DesignCanvas() {
       setMarquee(null);
     }
     drag.current = null;
+    setGuides(null);
     e.currentTarget.releasePointerCapture?.(e.pointerId);
   };
 
@@ -433,7 +482,7 @@ export function DesignCanvas() {
     });
   };
 
-  const cursor = tool === 'brush' || tool === 'eraser' ? 'none' : space.current ? 'grab' : 'default';
+  const cursor = tool === 'brush' || tool === 'eraser' ? 'none' : tool === 'fill' ? 'crosshair' : space.current ? 'grab' : 'default';
 
   return (
     <div className="design-wrap" ref={wrap}>

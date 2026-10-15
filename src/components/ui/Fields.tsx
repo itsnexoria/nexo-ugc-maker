@@ -14,6 +14,8 @@ interface NumberFieldProps {
   /** Visual tint for the label (e.g. axis colour) */
   tone?: 'x' | 'y' | 'z';
   title?: string;
+  /** Accessible name when there is no visible label */
+  ariaLabel?: string;
 }
 
 /**
@@ -32,6 +34,7 @@ export const NumberField = memo(function NumberField({
   suffix,
   tone,
   title,
+  ariaLabel,
 }: NumberFieldProps) {
   const [text, setText] = useState<string | null>(null);
   const scrub = useRef<{ x: number; start: number } | null>(null);
@@ -69,6 +72,7 @@ export const NumberField = memo(function NumberField({
       )}
       <input
         className="numfield-input num"
+        aria-label={ariaLabel ?? label ?? title}
         value={display}
         disabled={disabled}
         inputMode="decimal"
@@ -126,7 +130,7 @@ export const SliderField = memo(function SliderField({ label, value, onChange, m
         aria-label={label}
         onChange={(e) => onChange(parseFloat(e.target.value))}
       />
-      <NumberField value={value} onChange={onChange} step={step} min={min} max={max} precision={precision} disabled={disabled} />
+      <NumberField value={value} onChange={onChange} step={step} min={min} max={max} precision={precision} disabled={disabled} ariaLabel={`${label} (value)`} />
     </div>
   );
 });
@@ -147,6 +151,7 @@ export const ColorField = memo(function ColorField({ value, onChange, label, dis
       <input type="color" value={value} disabled={disabled} aria-label={label ?? 'Color'} onChange={(e) => onChange(e.target.value)} />
       <input
         className="input num"
+        aria-label={`${label ?? 'Color'} (hex code)`}
         value={hex ?? value}
         disabled={disabled}
         spellCheck={false}

@@ -16,10 +16,9 @@ export interface ImportedPart {
   map: THREE.Texture | null;
 }
 
-export const MODEL_EXTENSIONS = ['obj', 'glb', 'gltf'];
-export const SIDECAR_EXTENSIONS = ['mtl', 'bin'];
+import { MODEL_EXTENSIONS, extOf } from './modelTypes';
+export { MODEL_EXTENSIONS, SIDECAR_EXTENSIONS, extOf } from './modelTypes';
 
-export const extOf = (name: string): string => name.split('.').pop()?.toLowerCase() ?? '';
 const baseName = (url: string): string => decodeURIComponent(url.split('?')[0].split(/[\\/]/).pop() ?? '').toLowerCase();
 const hex = (c: THREE.Color): string => `#${c.getHexString()}`;
 

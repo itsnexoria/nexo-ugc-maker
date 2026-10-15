@@ -19,9 +19,28 @@ export function Modal({
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      // while a shortcut is being recorded, Esc cancels the recording instead of closing the dialog
+      if (e.key === 'Escape' && document.body.dataset.recordingKey !== '1') {
         e.stopPropagation();
         onClose();
+      }
+      // keep Tab inside the dialog so keyboard users cannot end up behind it
+      if (e.key === 'Tab' && ref.current) {
+        const items = Array.from(ref.current.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')).filter((el) => el.offsetParent !== null);
+        if (!items.length) {
+          e.preventDefault();
+          return;
+        }
+        const first = items[0];
+        const last = items[items.length - 1];
+        const inside = ref.current.contains(document.activeElement);
+        if (e.shiftKey && (document.activeElement === first || !inside || document.activeElement === ref.current)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && (document.activeElement === last || !inside)) {
+          e.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', onKey, true);

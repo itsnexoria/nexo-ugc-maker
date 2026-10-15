@@ -10,6 +10,9 @@ import {
   EyeOff,
   FlipHorizontal2,
   BrushCleaning,
+  Folder,
+  FolderOpen,
+  Contrast,
   Image as ImageIcon,
   Layers as LayersIcon,
   Lock,
@@ -39,8 +42,9 @@ import { selectedLayer, unusedClothingImageIds, useClothing, type ClothingTool }
 import { useUI } from '../store/ui';
 import { translateClip } from '../store/clothing';
 import type { BlendMode, ClothingKind, ClothingLayer, PatternId, ShapeType } from '../types';
-import { FONTS, PATTERNS } from './layers';
+import { PATTERNS, SYSTEM_FONTS, WEB_FONTS } from './layers';
 import { presetsFor } from './presets';
+import { hiddenInList } from './groups';
 import { KIND_ORDER, TEMPLATES, clipBounds, clipOptions } from './templates';
 
 // ------------------------------------------------------------------ toolbox
@@ -50,6 +54,7 @@ const TOOLS: { id: ClothingTool; label: string; key: string; icon: ReactNode }[]
   { id: 'place', label: 'Place on model: click the 3D model to put the selected layer there', key: 'P', icon: <Crosshair size={17} /> },
   { id: 'brush', label: 'Brush: paint on the template or straight onto the 3D model', key: 'B', icon: <Brush size={17} /> },
   { id: 'eraser', label: 'Eraser', key: 'E', icon: <Eraser size={17} /> },
+  { id: 'fill', label: 'Fill: click an area to cover exactly that area with a new layer of the brush colour', key: 'G', icon: <PaintBucket size={17} /> },
 ];
 
 export function ClothingToolbox() {
@@ -143,10 +148,10 @@ export function KindTabs() {
   const shown = useClothing((s) => s.shown);
   const setShown = useClothing((s) => s.setShown);
   return (
-    <div className="kind-tabs" role="tablist" aria-label="Clothing item">
+    <div className="kind-tabs" role="group" aria-label="Clothing item">
       {KIND_ORDER.map((k) => (
         <div key={k} className={`kind-tab ${active === k ? 'on' : ''}`}>
-          <button role="tab" aria-selected={active === k} className="kind-name" onClick={() => setActive(k)}>
+          <button aria-pressed={active === k} className="kind-name" onClick={() => setActive(k)}>
             {TEMPLATES[k].label}
           </button>
           <button className="icon-btn sm" aria-label={shown[k] ? `Hide ${TEMPLATES[k].label} on model` : `Show ${TEMPLATES[k].label} on model`} title="Show on the 3D model" onClick={() => setShown(k, !shown[k])}>
@@ -165,6 +170,7 @@ const TYPE_ICON: Record<ClothingLayer['type'], ReactNode> = {
   text: <Type size={12} />,
   shape: <Shapes size={12} />,
   paint: <Brush size={12} />,
+  group: <Folder size={12} />,
 };
 
 export function LayersList() {
@@ -176,6 +182,11 @@ export function LayersList() {
   const move = useClothing((s) => s.moveLayer);
   const remove = useClothing((s) => s.removeLayer);
   const reorder = useClothing((s) => s.reorderLayer);
+  const groupSelected = useClothing((s) => s.groupSelected);
+  const ungroupLayer = useClothing((s) => s.ungroupLayer);
+  const hidden = useMemo(() => hiddenInList(layers), [layers]);
+  const selectedGroup = layers.find((l) => l.type === 'group' && selectedIds.includes(l.id));
+  const canGroup = layers.some((l) => l.type !== 'group' && selectedIds.includes(l.id));
   const [editing, setEditing] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ id: string; above: boolean } | null>(null);
@@ -189,11 +200,21 @@ export function LayersList() {
     );
   }
   return (
+    <>
+      <div className="row" style={{ padding: '4px 6px', gap: 4 }}>
+        <button className="btn sm" disabled={!canGroup} title="Put the selected layers in a folder (Ctrl+G)" onClick={() => void groupSelected()}>
+          <Folder size={13} /> Group
+        </button>
+        <button className="btn sm" disabled={!selectedGroup} title="Take the layers out of the selected folder (Ctrl+Shift+G)" onClick={() => selectedGroup && ungroupLayer(selectedGroup.id)}>
+          Ungroup
+        </button>
+      </div>
     <ul className="layer-list" aria-label={`${TEMPLATES[kind].label} layers`}>
-      {[...layers].reverse().map((l) => (
+      {[...layers].reverse().filter((l) => !hidden.has(l.id)).map((l) => (
         <li key={l.id}>
           <div
-            className={`lrow ${selectedIds.includes(l.id) ? 'selected' : ''} ${!l.visible ? 'muted' : ''} ${drop?.id === l.id ? (drop.above ? 'drop-above' : 'drop-below') : ''} ${dragId === l.id ? 'dragging' : ''}`}
+            style={l.groupId ? { paddingLeft: 18 } : undefined}
+            className={`lrow ${l.type === 'group' ? 'group' : ''} ${selectedIds.includes(l.id) ? 'selected' : ''} ${!l.visible ? 'muted' : ''} ${drop?.id === l.id ? (drop.above ? 'drop-above' : 'drop-below') : ''} ${dragId === l.id ? 'dragging' : ''}`}
             onClick={(e) => {
               const st = useClothing.getState();
               if (e.shiftKey) st.selectRange(l.id);
@@ -235,7 +256,18 @@ export function LayersList() {
             <button className="icon-btn sm" aria-label={l.visible ? 'Hide layer' : 'Show layer'} onClick={(e) => (e.stopPropagation(), update(l.id, { visible: !l.visible }, `${l.id}:vis`))}>
               {l.visible ? <Eye size={12} /> : <EyeOff size={12} />}
             </button>
-            <span className="tree-icon">{TYPE_ICON[l.type]}</span>
+            {l.type === 'group' ? (
+              <button className="icon-btn sm" aria-expanded={!l.collapsed} aria-label={l.collapsed ? `Open ${l.name}` : `Close ${l.name}`} onClick={(e) => (e.stopPropagation(), update(l.id, { collapsed: !l.collapsed } as Partial<ClothingLayer>, `${l.id}:collapse`))}>
+                {l.collapsed ? <Folder size={13} /> : <FolderOpen size={13} />}
+              </button>
+            ) : (
+              <span className="tree-icon">{TYPE_ICON[l.type]}</span>
+            )}
+            {l.mask && (
+              <span className="mask-badge" title={l.mask.enabled === false ? 'Mask (off)' : 'Has a mask'} aria-label={l.mask.enabled === false ? 'Mask off' : 'Has a mask'}>
+                <Contrast size={11} />
+              </span>
+            )}
             {editing === l.id ? (
               <input
                 className="tree-input"
@@ -273,6 +305,7 @@ export function LayersList() {
         </li>
       ))}
     </ul>
+    </>
   );
 }
 
@@ -445,6 +478,48 @@ export function HistoryPanel() {
   );
 }
 
+function MaskControls({ layerId }: { layerId: string }) {
+  const mask = useClothing((s) => s.designs[s.activeKind].find((l) => l.id === layerId)?.mask);
+  const editing = useClothing((s) => s.maskEdit === layerId);
+  const update = useClothing((s) => s.updateLayer);
+  const addMask = useClothing((s) => s.addMask);
+  const removeMask = useClothing((s) => s.removeMask);
+  const clearMask = useClothing((s) => s.clearMask);
+  const setMaskEdit = useClothing((s) => s.setMaskEdit);
+  if (!mask) {
+    return (
+      <div className="col" style={{ gap: 4 }}>
+        <button className="btn sm" onClick={() => addMask(layerId)} title="Hide parts of this layer by painting, without changing the layer itself">
+          <Contrast size={13} /> Add mask
+        </button>
+      </div>
+    );
+  }
+  const set = (patch: Partial<typeof mask>, key?: string) => update(layerId, { mask: { ...mask, ...patch } }, key);
+  return (
+    <div className="col" style={{ gap: 6 }} role="group" aria-label="Layer mask">
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className={`btn sm ${editing ? 'is-on' : ''}`} aria-pressed={editing} onClick={() => setMaskEdit(editing ? null : layerId)}>
+          <Contrast size={13} /> {editing ? 'Done editing mask' : 'Edit mask'}
+        </button>
+        <button className="btn sm" disabled={!mask.strokes.length} onClick={() => clearMask(layerId)}>
+          Clear
+        </button>
+        <button className="btn sm" onClick={() => removeMask(layerId)}>
+          <Trash2 size={13} /> Remove
+        </button>
+      </div>
+      <label className="row">
+        <input type="checkbox" checked={mask.enabled !== false} onChange={(e) => set({ enabled: e.target.checked }, `${layerId}:maskon`)} /> <span>Mask on</span>
+      </label>
+      <label className="row">
+        <input type="checkbox" checked={mask.invert} onChange={(e) => set({ invert: e.target.checked }, `${layerId}:maskinv`)} /> <span>Invert (show only the painted part)</span>
+      </label>
+      <span className="hint">{editing ? 'Brush hides, eraser reveals. Nothing on the layer itself changes.' : 'Edit mask to paint where the layer is hidden.'}</span>
+    </div>
+  );
+}
+
 export function LayerProperties() {
   const kind = useClothing((s) => s.activeKind);
   const multi = useClothing((s) => s.selectedIds.length > 1);
@@ -458,6 +533,19 @@ export function LayerProperties() {
   const remove = useClothing((s) => s.removeLayer);
   const tool = useClothing((s) => s.tool);
 
+  const fillOpts = useClothing((s) => s.fillOpts);
+  const setFillOpts = useClothing((s) => s.setFillOpts);
+  const fillUi = (
+    <Section title="Fill">
+      <ColorField label="Color" value={brush.color} onChange={(v) => setBrush({ color: v })} />
+      <SliderField label="Tolerance" value={fillOpts.tolerance} min={0} max={100} step={1} precision={0} onChange={(v) => setFillOpts({ tolerance: v })} />
+      <SliderField label="Grow edge" value={fillOpts.expand} min={0} max={4} step={1} precision={0} onChange={(v) => setFillOpts({ expand: v })} />
+      <label className="row">
+        <input type="checkbox" checked={fillOpts.contiguous} onChange={(e) => setFillOpts({ contiguous: e.target.checked })} /> <span>Only the connected area</span>
+      </label>
+      <p className="hint">Click the template to cover that area with a new layer. Tolerance says how different a colour may be and still count. Grow edge covers the soft outline around shapes.</p>
+    </Section>
+  );
   const recent = useClothing((s) => s.recentColors);
   const brushUi = (
     <Section title={tool === 'eraser' ? 'Eraser' : 'Brush'}>
@@ -517,6 +605,7 @@ export function LayerProperties() {
     return (
       <>
         {(tool === 'brush' || tool === 'eraser') && brushUi}
+        {tool === 'fill' && fillUi}
         <div className="empty" style={{ minHeight: 100 }}>
           <span>Select a layer to edit it.</span>
         </div>
@@ -525,6 +614,28 @@ export function LayerProperties() {
   }
 
   const set = (patch: Record<string, unknown>, key?: string) => update(layer.id, patch as Partial<ClothingLayer>, key ?? `${layer.id}:${Object.keys(patch).join(',')}`);
+  if (layer.type === 'group') {
+    const count = useClothing.getState().designs[kind].filter((l) => l.groupId === layer.id).length;
+    return (
+      <Section title="Group">
+        <p className="hint">
+          A folder with {count} layer{count === 1 ? '' : 's'}. Hiding or locking it affects every layer inside, and its opacity is multiplied into theirs.
+        </p>
+        <SliderField label="Opacity" value={layer.opacity} onChange={(v) => set({ opacity: v })} />
+        <div className="row" style={{ flexWrap: 'wrap' }}>
+          <button className="btn sm" onClick={() => duplicate(layer.id)}>
+            <Copy size={13} /> Duplicate
+          </button>
+          <button className="btn sm" onClick={() => useClothing.getState().ungroupLayer(layer.id)}>
+            Ungroup
+          </button>
+          <button className="btn sm" title="Deletes the folder and every layer in it" onClick={() => remove(layer.id)}>
+            <Trash2 size={13} /> Delete with layers
+          </button>
+        </div>
+      </Section>
+    );
+  }
   const movable = layer.type === 'image' || layer.type === 'text' || layer.type === 'shape';
   const opts = clipOptions(kind);
   const b = clipBounds(kind, layer.clip);
@@ -532,6 +643,7 @@ export function LayerProperties() {
   return (
     <>
       {(tool === 'brush' || tool === 'eraser') && brushUi}
+      {tool === 'fill' && fillUi}
       <Section title="Layer">
         <div className="field">
           <label htmlFor="lyr-name">Name</label>
@@ -557,6 +669,7 @@ export function LayerProperties() {
             <option value="overlay">Overlay</option>
           </select>
         </Row>
+        <MaskControls layerId={layer.id} />
         <div className="row" style={{ flexWrap: 'wrap' }}>
           {movable && (
             <button className="btn sm" title="Move the layer to the middle of the area it applies to" onClick={() => set({ x: b.x + b.w / 2, y: b.y + b.h / 2 }, `${layer.id}:center`)}>
@@ -616,11 +729,20 @@ export function LayerProperties() {
           <textarea className="input" rows={2} style={{ height: 52, padding: 6, resize: 'none' }} aria-label="Text" value={layer.text} onChange={(e) => set({ text: e.target.value || ' ' })} onKeyDown={(e) => e.stopPropagation()} />
           <Row label="Font">
             <select className="select" value={layer.font} aria-label="Font" onChange={(e) => set({ font: e.target.value })}>
-              {FONTS.map((f) => (
-                <option key={f} value={f} style={{ fontFamily: f }}>
-                  {f}
-                </option>
-              ))}
+              <optgroup label="Included with the app">
+                {WEB_FONTS.map((f) => (
+                  <option key={f} value={f} style={{ fontFamily: f }}>
+                    {f}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="Your computer's fonts (may look different elsewhere)">
+                {SYSTEM_FONTS.map((f) => (
+                  <option key={f} value={f} style={{ fontFamily: f }}>
+                    {f}
+                  </option>
+                ))}
+              </optgroup>
             </select>
           </Row>
           <SliderField label="Size" value={layer.size} min={4} max={160} step={1} precision={0} onChange={(v) => set({ size: v })} />
@@ -640,6 +762,9 @@ export function LayerProperties() {
           </div>
           <ColorField label="Outline" value={layer.stroke} onChange={(v) => set({ stroke: v })} />
           <SliderField label="Outline size" value={layer.strokeWidth} min={0} max={12} step={0.5} precision={1} onChange={(v) => set({ strokeWidth: v })} />
+          <SliderField label="Letter space" value={layer.spacing ?? 0} min={-4} max={40} step={0.5} precision={1} onChange={(v) => set({ spacing: v })} />
+          <SliderField label="Curve" value={layer.curve ?? 0} min={-360} max={360} step={5} precision={0} onChange={(v) => set({ curve: v })} />
+          <p className="hint">Curve bends the text along an arc: positive like a rainbow, negative like a smile. Curved text is centred.</p>
         </Section>
       )}
 

@@ -43,7 +43,8 @@ export function BottomPanel() {
           onPointerUp={() => (drag.current = null)}
         />
       )}
-      <div className="tabs" role="tablist">
+      <div className="tabs">
+        <div role="tablist" aria-label="Panels" style={{ display: 'contents' }}>
         {TABS.map((t) => (
           <button key={t.id} role="tab" aria-selected={open && tab === t.id} className={`tab ${open && tab === t.id ? 'active' : ''}`} onClick={() => setTab(t.id)}>
             {t.label}
@@ -52,6 +53,7 @@ export function BottomPanel() {
             {t.id === 'console' && errors > 0 && <span className="count err">{errors}</span>}
           </button>
         ))}
+        </div>
         <div className="grow" />
         <button className="icon-btn" onClick={toggle} aria-label={open ? 'Collapse panel' : 'Expand panel'} aria-expanded={open}>
           {open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}

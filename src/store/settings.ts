@@ -17,6 +17,8 @@ export interface Settings {
   envIntensity: number;
   quality: Quality;
   displayName: string;
+  /** command id -> key combo; an empty string means the command is unbound */
+  shortcuts: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -33,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   envIntensity: 0.9,
   quality: 'medium',
   displayName: 'Creator',
+  shortcuts: {},
 };
 
 const KEY = 'nexo-ugc-settings-v1';
@@ -40,7 +43,13 @@ const KEY = 'nexo-ugc-settings-v1';
 function load(): Settings {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+    if (raw) {
+      const parsed = { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<Settings>) };
+      // a damaged shortcuts entry must not break every key press
+      const sc = parsed.shortcuts as unknown;
+      parsed.shortcuts = sc && typeof sc === 'object' && !Array.isArray(sc) ? Object.fromEntries(Object.entries(sc as Record<string, unknown>).filter(([, v]) => typeof v === 'string')) as Record<string, string> : {};
+      return parsed;
+    }
   } catch {
     /* ignore corrupt settings */
   }
@@ -79,6 +88,7 @@ function persist(s: Settings) {
     envIntensity: s.envIntensity,
     quality: s.quality,
     displayName: s.displayName,
+    shortcuts: s.shortcuts,
   };
   try {
     localStorage.setItem(KEY, JSON.stringify(data));

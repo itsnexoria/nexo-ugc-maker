@@ -1,7 +1,7 @@
 import { useEditor } from '../store/editor';
 import { useUI } from '../store/ui';
 import { geometryToModelAsset, triangleCount } from '../utils/geometry';
-import { MODEL_EXTENSIONS, SIDECAR_EXTENSIONS, extOf, loadModelFiles, normaliseParts, textureToDataUrl } from './modelImport';
+import { MODEL_EXTENSIONS, SIDECAR_EXTENSIONS, extOf } from './modelTypes';
 import { uid } from '../utils/ids';
 import type { TextureAsset } from '../types';
 import { CLOTHING_IMAGE_MAX_DIM, TEXTURE_MAX_DIM, optimizeDataUrl } from '../utils/imageOptimize';
@@ -84,6 +84,8 @@ export async function importModelFiles(files: File[]): Promise<boolean> {
     const total = files.reduce((n, f) => n + f.size, 0);
     if (total > MAX_MODEL_BYTES) throw new Error(`These files add up to more than 40 MB.`);
     ui.setBusy(`Importing ${model.name}…`);
+    // the OBJ/glTF loaders are only downloaded when someone actually imports a model
+    const { loadModelFiles, normaliseParts, textureToDataUrl } = await import('./modelImport');
     const loaded = await loadModelFiles(files);
     const { scaled, factor } = normaliseParts(loaded.parts);
     const tris = loaded.parts.reduce((n, p) => n + triangleCount(p.geometry), 0);

@@ -21,8 +21,8 @@ initPwa();
 
 // Debug handle for automated tests: open the app with ?debug
 if (new URLSearchParams(location.search).has('debug')) {
-  void Promise.all([import('./store/editor'), import('./viewport/api'), import('./store/clothing'), import('./clothing/composite')]).then(([e, v, c, comp]) => {
-    (window as unknown as Record<string, unknown>).__nexo = { editor: e.useEditor, viewport: v.viewportApi, clothing: c.useClothing, composite: comp };
+  void Promise.all([import('./store/editor'), import('./viewport/api'), import('./store/clothing'), import('./clothing/composite'), import('./clothing/fillTool')]).then(([e, v, c, comp, fill]) => {
+    (window as unknown as Record<string, unknown>).__nexo = { editor: e.useEditor, viewport: v.viewportApi, clothing: c.useClothing, composite: comp, fill };
   });
 }
 

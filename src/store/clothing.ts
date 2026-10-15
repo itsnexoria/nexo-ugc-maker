@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { ClothingData, ClothingImage, ClothingKind, ClothingLayer, ImageLayer, PaintLayer, PatternId, ShapeLayer, Stroke, TextLayer } from '../types';
 import { makeLayer, type NewLayerType } from '../clothing/layers';
+import { effectiveOf, groupIndex, groupLayers, isGroup, normalizeGroups, reorderLayers, ungroup, withMembers } from '../clothing/groups';
 import { TEMPLATES, mirrorGroupId, mirrorPanelId, panelAt, panelById } from '../clothing/templates';
 import { layerBox } from '../clothing/render';
 import { R15_DEFAULTS, getR15Calibration, setR15Calibration, type R15Calibration } from '../clothing/mapping';
@@ -10,7 +11,15 @@ import { useUI } from './ui';
 const HISTORY_LIMIT = 60;
 const MERGE_WINDOW_MS = 900;
 
-export type ClothingTool = 'select' | 'place' | 'brush' | 'eraser';
+export type ClothingTool = 'select' | 'place' | 'brush' | 'eraser' | 'fill';
+
+export interface FillOptions {
+  /** 0 to 100 */
+  tolerance: number;
+  contiguous: boolean;
+  /** grow the filled area by this many template pixels, to cover anti-aliased edges */
+  expand: number;
+}
 export type ViewMode = 'split' | '2d' | '3d';
 
 export interface BrushState {
@@ -75,6 +84,8 @@ export interface ClothingState {
   r15Cal: R15Calibration;
   setR15Cal: (patch: Partial<R15Calibration> | 'reset') => void;
   showGuides: boolean;
+  /** snap moving layers to panel edges, centres and other layers (hold Alt to bypass) */
+  snap: boolean;
   /** Extra thickness (studs) added to the clothing on the 3D preview to imitate puffy layered clothing. 0 = off. */
   puffiness: number;
   viewMode: ViewMode;
@@ -101,6 +112,19 @@ export interface ClothingState {
   setTool: (t: ClothingTool) => void;
   setBrush: (patch: Partial<BrushState>) => void;
   setShowGuides: (v: boolean) => void;
+  setSnap: (v: boolean) => void;
+  /** Layer whose mask the brush and eraser currently paint on (null = painting normally) */
+  fillOpts: FillOptions;
+  setFillOpts: (patch: Partial<FillOptions>) => void;
+  /** Adds a layer covering the whole template that shows `img` (a picture of the filled area). One undo step. */
+  addRegionFill: (img: ClothingImage) => string;
+  maskEdit: string | null;
+  setMaskEdit: (id: string | null) => void;
+  addMask: (id: string) => void;
+  removeMask: (id: string) => void;
+  clearMask: (id: string) => void;
+  /** Moves the selected layers by whole pixels (arrow keys). Held keys merge into one undo step. */
+  nudgeSelected: (dx: number, dy: number) => void;
   setPuffiness: (v: number) => void;
   setViewMode: (v: ViewMode) => void;
   setShown: (k: ClothingKind, v: boolean) => void;
@@ -119,6 +143,10 @@ export interface ClothingState {
   copyLayersToKind: (ids: string[] | 'all', target: ClothingKind) => number;
   jumpHistory: (steps: number) => void;
   mirrorLayer: (id: string) => string | null;
+  /** Puts the chosen layers into a new group. Returns the group's id. */
+  groupSelected: () => string | null;
+  /** Dissolves a group; its layers stay where they are. */
+  ungroupLayer: (groupId: string) => void;
   moveLayer: (id: string, delta: number) => void;
   reorderLayer: (id: string, toIndex: number) => void;
   clearDesign: () => void;
@@ -174,7 +202,8 @@ export const useClothing = create<ClothingState>((set, get) => {
     touch();
   };
 
-  const withLayers = (kind: ClothingKind, layers: ClothingLayer[]): Designs => ({ ...get().designs, [kind]: layers });
+  /** every edit goes through here, so group membership can never be left inconsistent */
+  const withLayers = (kind: ClothingKind, layers: ClothingLayer[]): Designs => ({ ...get().designs, [kind]: normalizeGroups(layers) });
 
   const findKind = (id: string): ClothingKind | null => {
     const d = get().designs;
@@ -193,6 +222,19 @@ export const useClothing = create<ClothingState>((set, get) => {
     recentColors: [],
     r15Cal: { ...R15_DEFAULTS },
     showGuides: true,
+    snap: true,
+    maskEdit: null,
+    fillOpts: { tolerance: 12, contiguous: true, expand: 1 },
+    setFillOpts: (patch) => set((s) => ({ fillOpts: { ...s.fillOpts, ...patch } })),
+    addRegionFill: (img) => {
+      const s = get();
+      const kind = s.activeKind;
+      const spec = TEMPLATES[kind];
+      const layer = { ...(makeLayer(kind, 'image', 'all', img) as ImageLayer), name: 'Filled area', x: spec.width / 2, y: spec.height / 2, w: spec.width, h: spec.height };
+      commit('Filled an area', withLayers(kind, [...s.designs[kind], layer]), undefined, [kind], [...s.images, img]);
+      set({ selectedId: layer.id, selectedIds: [layer.id] });
+      return layer.id;
+    },
     puffiness: 0,
     viewMode: 'split',
     shown: { shirt: true, pants: true, tshirt: true },
@@ -235,8 +277,46 @@ export const useClothing = create<ClothingState>((set, get) => {
       return { version: 1, designs: s.designs, images: s.images, activeKind: s.activeKind, ...(isDefault ? {} : { r15: { ...r15 } }) };
     },
 
-    setActiveKind: (activeKind) => set({ activeKind, selectedId: null, selectedIds: [], tool: 'select' }),
-    select: (selectedId) => set({ selectedId, selectedIds: selectedId ? [selectedId] : [] }),
+    setActiveKind: (activeKind) => set({ activeKind, selectedId: null, selectedIds: [], tool: 'select', maskEdit: null }),
+    select: (selectedId) => set((s) => ({ selectedId, selectedIds: selectedId ? [selectedId] : [], maskEdit: s.maskEdit && s.maskEdit === selectedId ? s.maskEdit : null })),
+    setMaskEdit: (id) =>
+      set((s) => {
+        if (id === null) return { maskEdit: null };
+        const layer = s.designs[s.activeKind].find((l) => l.id === id);
+        if (!layer?.mask) return {};
+        // painting a mask needs a brush: switch to it so Edit mask does something right away
+        return { maskEdit: id, selectedId: id, selectedIds: [id], tool: s.tool === 'brush' || s.tool === 'eraser' ? s.tool : 'brush' };
+      }),
+    addMask: (id) => {
+      const s = get();
+      const kind = findKind(id);
+      const layer = kind ? s.designs[kind].find((l) => l.id === id) : null;
+      if (!kind || !layer || layer.mask) return;
+      const layers = s.designs[kind].map((l) => (l.id === id ? ({ ...l, mask: { strokes: [], invert: false, enabled: true } } as ClothingLayer) : l));
+      commit(`Added a mask to ${layer.name}`, withLayers(kind, layers), undefined, [kind]);
+      get().setMaskEdit(id);
+    },
+    removeMask: (id) => {
+      const s = get();
+      const kind = findKind(id);
+      const layer = kind ? s.designs[kind].find((l) => l.id === id) : null;
+      if (!kind || !layer?.mask) return;
+      const layers = s.designs[kind].map((l) => {
+        if (l.id !== id) return l;
+        const { mask: _gone, ...rest } = l;
+        return rest as ClothingLayer;
+      });
+      commit(`Removed the mask from ${layer.name}`, withLayers(kind, layers), undefined, [kind]);
+      if (get().maskEdit === id) set({ maskEdit: null });
+    },
+    clearMask: (id) => {
+      const s = get();
+      const kind = findKind(id);
+      const layer = kind ? s.designs[kind].find((l) => l.id === id) : null;
+      if (!kind || !layer?.mask || !layer.mask.strokes.length) return;
+      const layers = s.designs[kind].map((l) => (l.id === id ? ({ ...l, mask: { ...l.mask!, strokes: [] } } as ClothingLayer) : l));
+      commit(`Cleared the mask on ${layer.name}`, withLayers(kind, layers), undefined, [kind]);
+    },
     toggleSelect: (id) =>
       set((s) => {
         const has = s.selectedIds.includes(id);
@@ -256,6 +336,19 @@ export const useClothing = create<ClothingState>((set, get) => {
     setTool: (tool) => set({ tool }),
     setBrush: (patch) => set((s) => ({ brush: { ...s.brush, ...patch } })),
     setShowGuides: (showGuides) => set({ showGuides }),
+    setSnap: (snap) => set({ snap }),
+    nudgeSelected: (dx, dy) => {
+      const s = get();
+      const all = s.designs[s.activeKind];
+      const gi = groupIndex(all);
+      const ids = s.selectedIds.filter((id) => {
+        const l = all.find((x) => x.id === id);
+        if (!l || isGroup(l)) return false;
+        const e = effectiveOf(l, gi);
+        return !e.locked && e.visible;
+      });
+      if (ids.length) s.moveLayersBy(ids, dx, dy, 'nudge');
+    },
     setPuffiness: (puffiness) => set({ puffiness: Math.max(0, Math.min(0.5, puffiness)) }),
     setViewMode: (viewMode) => set({ viewMode }),
     setShown: (k, v) => set((s) => ({ shown: { ...s.shown, [k]: v } })),
@@ -319,9 +412,10 @@ export const useClothing = create<ClothingState>((set, get) => {
       if (!kind) return;
       const s = get();
       const layer = s.designs[kind].find((l) => l.id === id);
-      commit(`Deleted ${layer?.name ?? 'layer'}`, withLayers(kind, s.designs[kind].filter((l) => l.id !== id)), undefined, [kind]);
-      if (s.selectedId === id) set({ selectedId: null });
-      set((st) => ({ selectedIds: st.selectedIds.filter((x) => x !== id) }));
+      // deleting a group deletes the layers inside it
+      const gone = withMembers(s.designs[kind], [id]);
+      commit(`Deleted ${layer?.name ?? 'layer'}${gone.size > 1 ? ` and ${gone.size - 1} layer${gone.size === 2 ? '' : 's'}` : ''}`, withLayers(kind, s.designs[kind].filter((l) => !gone.has(l.id))), undefined, [kind]);
+      set((st) => ({ selectedId: st.selectedId && gone.has(st.selectedId) ? null : st.selectedId, selectedIds: st.selectedIds.filter((x) => !gone.has(x)) }));
     },
 
     duplicateLayer: (id) => {
@@ -330,6 +424,18 @@ export const useClothing = create<ClothingState>((set, get) => {
       const s = get();
       const idx = s.designs[kind].findIndex((l) => l.id === id);
       const src = s.designs[kind][idx];
+      if (isGroup(src)) {
+        // a duplicated group brings copies of its layers along
+        const gid = `${src.id}_c${Date.now().toString(36)}`;
+        const block = s.designs[kind].filter((l) => l.groupId === src.id).map((l, i) => ({ ...l, id: `${l.id}_c${Date.now().toString(36)}${i}`, groupId: gid }) as ClothingLayer);
+        const header = { ...src, id: gid, name: `${src.name} copy` } as ClothingLayer;
+        const all = [...s.designs[kind]];
+        const end = idx + 1 + block.length;
+        all.splice(end, 0, header, ...block);
+        commit(`Duplicated ${src.name}`, withLayers(kind, all), undefined, [kind]);
+        set({ selectedId: gid, selectedIds: [gid] });
+        return gid;
+      }
       const copy = { ...src, id: `${src.id}_c${Date.now().toString(36)}`, name: `${src.name} copy` } as ClothingLayer;
       if (copy.type === 'image' || copy.type === 'text' || copy.type === 'shape') {
         (copy as ImageLayer | TextLayer | ShapeLayer).x += 8;
@@ -353,6 +459,8 @@ export const useClothing = create<ClothingState>((set, get) => {
         return null;
       }
       const copy = { ...src, id: `${src.id}_m${Date.now().toString(36)}`, name: `${src.name} (mirrored)` } as ClothingLayer;
+      // a mask is painted for one side only, so the mirrored copy starts without one
+      delete copy.mask;
       const sp = panelById(kind, src.clip);
       if (sp) {
         const dp = panelById(kind, mirrorPanelId(src.clip));
@@ -381,10 +489,10 @@ export const useClothing = create<ClothingState>((set, get) => {
     removeLayers: (ids) => {
       const s = get();
       const kind = s.activeKind;
-      const gone = new Set(ids);
+      const gone = withMembers(s.designs[kind], ids);
       const layers = s.designs[kind].filter((l) => !gone.has(l.id));
       if (layers.length === s.designs[kind].length) return;
-      commit(ids.length === 1 ? 'Deleted layer' : `Deleted ${ids.length} layers`, withLayers(kind, layers), undefined, [kind]);
+      commit(gone.size === 1 ? 'Deleted layer' : `Deleted ${gone.size} layers`, withLayers(kind, layers), undefined, [kind]);
       set({ selectedId: null, selectedIds: [] });
     },
 
@@ -394,7 +502,7 @@ export const useClothing = create<ClothingState>((set, get) => {
       const layers = [...s.designs[kind]];
       const copies: ClothingLayer[] = [];
       for (const l of s.designs[kind]) {
-        if (!ids.includes(l.id)) continue;
+        if (!ids.includes(l.id) || isGroup(l)) continue;
         const c = { ...l, id: `${l.id}_c${Date.now().toString(36)}${copies.length}`, name: `${l.name} copy` } as ClothingLayer;
         if (c.type === 'image' || c.type === 'text' || c.type === 'shape') {
           (c as ImageLayer | TextLayer | ShapeLayer).x += 8;
@@ -464,9 +572,10 @@ export const useClothing = create<ClothingState>((set, get) => {
         useUI.getState().toast('warn', 'T-shirts use a different canvas, so layers cannot be copied to or from them.');
         return 0;
       }
-      const src = s.designs[from].filter((l) => ids === 'all' || ids.includes(l.id));
+      // folders do not travel between templates: their layers arrive as plain layers
+      const src = s.designs[from].filter((l) => !isGroup(l) && (ids === 'all' || ids.includes(l.id) || (!!l.groupId && ids.includes(l.groupId))));
       if (!src.length) return 0;
-      const copies = src.map((l, i) => ({ ...l, id: `${l.id}_to${target}${Date.now().toString(36)}${i}`, name: `${l.name} (from ${TEMPLATES[from].label})`, clip: translateClip(l.clip, from, target) }) as ClothingLayer);
+      const copies = src.map((l, i) => ({ ...l, groupId: undefined, id: `${l.id}_to${target}${Date.now().toString(36)}${i}`, name: `${l.name} (from ${TEMPLATES[from].label})`, clip: translateClip(l.clip, from, target) }) as ClothingLayer);
       const designs = { ...s.designs, [target]: [...s.designs[target], ...copies] };
       commit(`Copied ${copies.length} layer${copies.length === 1 ? '' : 's'} to ${TEMPLATES[target].label}`, designs, undefined, [target]);
       return copies.length;
@@ -480,24 +589,39 @@ export const useClothing = create<ClothingState>((set, get) => {
     moveLayer: (id, delta) => {
       const kind = findKind(id);
       if (!kind) return;
-      const layers = [...get().designs[kind]];
+      const layers = get().designs[kind];
       const i = layers.findIndex((l) => l.id === id);
       const j = Math.max(0, Math.min(layers.length - 1, i + delta));
       if (i === j) return;
-      const [l] = layers.splice(i, 1);
-      layers.splice(j, 0, l);
-      commit('Reordered layers', withLayers(kind, layers), undefined, [kind]);
+      const next = reorderLayers(layers, id, j);
+      if (next !== layers) commit('Reordered layers', withLayers(kind, next), undefined, [kind]);
     },
 
     reorderLayer: (id, toIndex) => {
       const kind = findKind(id);
       if (!kind) return;
-      const layers = [...get().designs[kind]];
-      const i = layers.findIndex((l) => l.id === id);
-      if (i < 0 || i === toIndex) return;
-      const [l] = layers.splice(i, 1);
-      layers.splice(Math.max(0, Math.min(layers.length, toIndex)), 0, l);
-      commit('Reordered layers', withLayers(kind, layers), undefined, [kind]);
+      const layers = get().designs[kind];
+      const next = reorderLayers(layers, id, toIndex);
+      if (next !== layers) commit('Reordered layers', withLayers(kind, next), undefined, [kind]);
+    },
+
+    groupSelected: () => {
+      const s = get();
+      const kind = s.activeKind;
+      const res = groupLayers(s.designs[kind], s.selectedIds);
+      if (!res) return null;
+      commit('Grouped layers', withLayers(kind, res.layers), undefined, [kind]);
+      set({ selectedId: res.groupId, selectedIds: [res.groupId] });
+      return res.groupId;
+    },
+
+    ungroupLayer: (groupId) => {
+      const s = get();
+      const kind = findKind(groupId);
+      if (!kind || !isGroup(s.designs[kind].find((l) => l.id === groupId)!)) return;
+      const members = s.designs[kind].filter((l) => l.groupId === groupId).map((l) => l.id);
+      commit('Ungrouped layers', withLayers(kind, ungroup(s.designs[kind], groupId)), undefined, [kind]);
+      set({ selectedId: members[members.length - 1] ?? null, selectedIds: members });
     },
 
     clearDesign: () => {
@@ -507,13 +631,30 @@ export const useClothing = create<ClothingState>((set, get) => {
     },
 
     beginStroke: (stroke) => {
+      const ms = get();
+      if (ms.maskEdit) {
+        const kind = ms.activeKind;
+        const target = ms.designs[kind].find((l) => l.id === ms.maskEdit);
+        if (target?.mask) {
+          // the brush hides, the eraser reveals; the colour is irrelevant for a mask
+          const full: Stroke = { ...stroke, color: '#000000', hardness: stroke.hardness ?? ms.brush.hardness, alpha: stroke.alpha ?? ms.brush.opacity };
+          const strokes = [...target.mask.strokes, full];
+          const index = strokes.length - 1;
+          const layers = ms.designs[kind].map((l) => (l.id === target.id ? ({ ...l, mask: { ...target.mask!, strokes } } as ClothingLayer) : l));
+          commit(stroke.erase ? 'Revealed' : 'Masked', withLayers(kind, layers), undefined, [kind]);
+          set({ lastKey: `stroke:${target.id}:mask${index}`, lastTime: Date.now() });
+          return { layerId: target.id, index, mirrorIndex: null };
+        }
+        set({ maskEdit: null });
+      }
       const s = get();
       const kind = s.activeKind;
       const layers = s.designs[kind];
       const b = s.brush;
       const fill: Stroke['fill'] = stroke.erase || b.fillType === 'solid' ? undefined : b.fillType === 'pattern' ? { type: 'pattern', pattern: b.pattern, color2: b.color2, size: b.patternSize } : { type: 'gradient', color2: b.color2 };
       const full: Stroke = { ...stroke, hardness: stroke.hardness ?? b.hardness, alpha: stroke.alpha ?? b.opacity, ...(fill ? { fill } : {}) };
-      let target = layers.find((l) => l.id === s.selectedId && l.type === 'paint' && !l.locked) as PaintLayer | undefined;
+      const gi = groupIndex(layers);
+      let target = layers.find((l) => l.id === s.selectedId && l.type === 'paint' && !effectiveOf(l, gi).locked) as PaintLayer | undefined;
       let next = layers;
       if (!target) {
         target = makeLayer(kind, 'paint') as PaintLayer;
@@ -558,6 +699,19 @@ export const useClothing = create<ClothingState>((set, get) => {
         return fresh.length ? { ...st, points: [...st.points, ...fresh] } : st;
       };
       let changed = false;
+      if (s.maskEdit === layerId) {
+        const layers = s.designs[kind].map((l) => {
+          if (l.id !== layerId || !l.mask || !l.mask.strokes[index]) return l;
+          const grown = add(l.mask.strokes[index], points);
+          if (grown === l.mask.strokes[index]) return l;
+          changed = true;
+          const strokes = l.mask.strokes.slice();
+          strokes[index] = grown;
+          return { ...l, mask: { ...l.mask, strokes } } as ClothingLayer;
+        });
+        if (changed) commit('Masked', withLayers(kind, layers), `stroke:${layerId}:mask${index}`, [kind]);
+        return;
+      }
       const layers = s.designs[kind].map((l) => {
         if (l.id !== layerId || l.type !== 'paint') return l;
         const strokes = l.strokes.slice();

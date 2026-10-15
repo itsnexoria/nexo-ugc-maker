@@ -1,7 +1,8 @@
+import './fonts';
 import { useEffect, useState } from 'react';
 import { tourSeen } from '../components/Tour';
 import { useCompact } from '../hooks/useCompact';
-import { ChevronDown, ChevronUp, Grid3x3, Maximize, RotateCcw } from 'lucide-react';
+import { Magnet, ChevronDown, ChevronUp, Grid3x3, Maximize, RotateCcw } from 'lucide-react';
 import { TopBar } from '../components/TopBar';
 import { Tip } from '../components/ui/Tooltip';
 import { TestFitButton } from '../components/TestFitPanel';
@@ -83,6 +84,8 @@ function CenterBar() {
   const setMode = useClothing((s) => s.setViewMode);
   const guides = useClothing((s) => s.showGuides);
   const setGuides = useClothing((s) => s.setShowGuides);
+  const snap = useClothing((s) => s.snap);
+  const setSnap = useClothing((s) => s.setSnap);
   const kind = useClothing((s) => s.activeKind);
   const tool = useClothing((s) => s.tool);
   const puff = useClothing((s) => s.puffiness);
@@ -92,6 +95,7 @@ function CenterBar() {
     place: 'Select a layer, then click the 3D model to place it.',
     brush: 'Paint on the template or straight onto the 3D model.',
     eraser: 'Erase paint on the selected paint layer.',
+    fill: 'Click an area to fill it with the brush colour. Tolerance and edge growth are in the right panel.',
   };
   return (
     <div className="cl-bar">
@@ -110,6 +114,11 @@ function CenterBar() {
       <Tip label="Show panel outlines and labels">
         <button className={`icon-btn boxed ${guides ? 'active' : ''}`} aria-pressed={guides} aria-label="Toggle template guides" onClick={() => setGuides(!guides)}>
           <Grid3x3 size={14} />
+        </button>
+      </Tip>
+      <Tip label="Snap to panel edges, centres and other layers while dragging (S). Hold Alt to move freely.">
+        <button className={`icon-btn boxed ${snap ? 'active' : ''}`} aria-pressed={snap} aria-label="Toggle snapping" onClick={() => setSnap(!snap)}>
+          <Magnet size={14} />
         </button>
       </Tip>
       <Tip label="Fit template to view">
@@ -144,13 +153,15 @@ function Bottom() {
   const set = (t: BTab) => setTabUi(t === 'images' ? 'textures' : t === 'console' ? 'console' : 'assets');
   return (
     <section className="bottom" style={{ height: open ? Math.min(height, 240) : undefined }} aria-label="Presets and images">
-      <div className="tabs" role="tablist">
+      <div className="tabs">
+        <div role="tablist" aria-label="Panels" style={{ display: 'contents' }}>
         {(['presets', 'images', 'console'] as BTab[]).map((t) => (
           <button key={t} role="tab" aria-selected={open && tab === t} className={`tab ${open && tab === t ? 'active' : ''}`} onClick={() => (set(t), !open && toggle())}>
             {t[0].toUpperCase() + t.slice(1)}
             {t === 'images' && imgCount > 0 && <span className="count">{imgCount}</span>}
           </button>
         ))}
+        </div>
         <div className="grow" />
         <button className="icon-btn" onClick={toggle} aria-label={open ? 'Collapse panel' : 'Expand panel'} aria-expanded={open}>
           {open ? <ChevronDown size={16} /> : <ChevronUp size={16} />}
@@ -190,7 +201,8 @@ export function ClothingWorkspace() {
       <TopBar mode="clothing" />
       <div className="workspace">
         <ClothingToolbox />
-        <div className="center">
+        <main className="center">
+          <h1 className="sr-only">Nexo UGC Studio: clothing editor</h1>
           <CenterBar />
           <div
             className={`cl-main mode-${mode} ${dragOver ? 'dragover' : ''}`}
@@ -221,7 +233,7 @@ export function ClothingWorkspace() {
             )}
           </div>
           <Bottom />
-        </div>
+        </main>
         <aside className="right" aria-label="Layers and properties">
           <KindTabs />
           <div className="cl-layers">

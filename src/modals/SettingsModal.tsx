@@ -89,7 +89,7 @@ export function SettingsModal() {
           <div className="slider-row" style={{ gridTemplateColumns: '120px 1fr' }}>
             <span className="slider-label">Grid size (studs)</span>
             <div style={{ maxWidth: 120 }}>
-              <NumberField value={st.gridSize} step={0.25} min={0.1} max={4} onChange={(v) => st.set('gridSize', v)} />
+              <NumberField ariaLabel="Grid size in studs" value={st.gridSize} step={0.25} min={0.1} max={4} onChange={(v) => st.set('gridSize', v)} />
             </div>
           </div>
           <SliderField labelWidth={110} label="Camera speed" value={st.cameraSensitivity} min={0.3} max={2.5} step={0.05} onChange={(v) => st.set('cameraSensitivity', v)} />

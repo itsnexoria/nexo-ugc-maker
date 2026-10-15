@@ -16,7 +16,8 @@
   --border-strong: #3b3b44;
   --text: #e8e8ec;
   --text-dim: #a0a0aa;
-  --text-faint: #6f6f7a;
+  --text-faint: #8a8a95;
+  --accent-text: #ff6b70;
   --accent: #e3242b;
   --accent-hover: #f13a41;
   --accent-ink: #ffffff;
@@ -41,7 +42,7 @@
   --border-strong: #464c56;
   --text: #e6e9ee;
   --text-dim: #a3a9b4;
-  --text-faint: #737a86;
+  --text-faint: #8d94a0;
   --input-bg: #15171a;
 }
 
@@ -55,7 +56,8 @@
   --border-strong: #b5b5be;
   --text: #1b1b20;
   --text-dim: #54545e;
-  --text-faint: #80808c;
+  --text-faint: #6a6a76;
+  --accent-text: var(--accent);
   --accent: #d11d24;
   --accent-hover: #b9151c;
   --accent-soft: rgba(209, 29, 36, 0.12);
@@ -499,4 +501,17 @@ select,
 .design-wrap canvas {
   touch-action: none;
   -webkit-touch-callout: none;
+}
+
+/* visible to screen readers only */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

@@ -181,3 +181,33 @@ describe('image scaling plan', () => {
     expect(planScale(0, 0, 1024).scaled).toBe(false);
   });
 });
+
+describe('clothing: arrow-key nudging', () => {
+  beforeEach(resetClothing);
+
+  it('moves the selected layer by whole pixels and merges a held key into one undo step', () => {
+    const c = useClothing.getState();
+    const id = c.addLayer('shape');
+    const x0 = (useClothing.getState().designs.shirt[0] as { x: number }).x;
+    const before = useClothing.getState().past.length;
+    c.nudgeSelected(1, 0);
+    c.nudgeSelected(1, 0);
+    c.nudgeSelected(10, 0);
+    const l = useClothing.getState().designs.shirt.find((q) => q.id === id) as { x: number };
+    expect(l.x).toBe(x0 + 12);
+    expect(useClothing.getState().past.length - before).toBe(1);
+    c.undo();
+    expect((useClothing.getState().designs.shirt.find((q) => q.id === id) as { x: number }).x).toBe(x0);
+  });
+
+  it('skips locked layers and does nothing without a selection', () => {
+    const c = useClothing.getState();
+    const id = c.addLayer('shape');
+    c.updateLayer(id, { locked: true });
+    const x0 = (useClothing.getState().designs.shirt[0] as { x: number }).x;
+    c.nudgeSelected(5, 0);
+    expect((useClothing.getState().designs.shirt[0] as { x: number }).x).toBe(x0);
+    c.select(null);
+    expect(() => c.nudgeSelected(5, 0)).not.toThrow();
+  });
+});

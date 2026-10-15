@@ -161,7 +161,7 @@ export function SceneTab() {
 
   return (
     <div className="tree" role="tree" aria-label="Scene hierarchy">
-      <div className="tree-row header" style={{ paddingLeft: 6 }} onClick={() => setOpen((o) => !o)}>
+      <div className="tree-row header" role="treeitem" aria-expanded={open} aria-selected={false} style={{ paddingLeft: 6 }} onClick={() => setOpen((o) => !o)}>
         <button className="icon-btn sm twisty" aria-label="Toggle avatar">
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </button>
@@ -173,6 +173,8 @@ export function SceneTab() {
       {open && rootBones.map((b) => <BoneRow key={b.name} bone={b} depth={1} children={bones.filter((x) => x.parent === b.name)} />)}
       <div
         className={`tree-row header ${over ? 'drop' : ''}`}
+        role="treeitem"
+        aria-selected={false}
         style={{ paddingLeft: 20 }}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes('text/nexo-object')) {

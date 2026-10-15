@@ -1,4 +1,4 @@
-import { Crosshair, Grid3x3, Magnet, PersonStanding, RotateCcw, Scan, SunMedium, X } from 'lucide-react';
+import { Anchor, Crosshair, Grid3x3, Magnet, PersonStanding, RotateCcw, Scan, SunMedium, X } from 'lucide-react';
 import { focusSelection } from '../editor/actions';
 import { useEditor } from '../store/editor';
 import { useSettings } from '../store/settings';
@@ -28,6 +28,7 @@ export function ViewportOverlay() {
   const showAvatar = useViewport((s) => s.showAvatar);
   const requestCamera = useViewport((s) => s.requestCamera);
   const showGrid = useSettings((s) => s.showGrid);
+  const showAttachment = useViewport((s) => s.showAttachment);
   const snap = useSettings((s) => s.snap);
   const setSetting = useSettings((s) => s.set);
   const report = useValidation();
@@ -66,6 +67,11 @@ export function ViewportOverlay() {
       {!preview && (
         <div className="vp-tr">
           <TestFitButton />
+          <Tip label="Show where the selected accessory attaches (R6 / R15)" side="bottom">
+            <button className={`icon-btn boxed ${showAttachment ? 'active' : ''}`} aria-pressed={showAttachment} aria-label="Toggle attachment marker" onClick={() => useViewport.getState().setShowAttachment(!showAttachment)}>
+              <Anchor size={14} />
+            </button>
+          </Tip>
           <Tip label="Grid" shortcut="G" side="bottom">
             <button className={`icon-btn boxed ${showGrid ? 'active' : ''}`} aria-pressed={showGrid} aria-label="Toggle grid" onClick={() => setSetting('showGrid', !showGrid)}>
               <Grid3x3 size={14} />

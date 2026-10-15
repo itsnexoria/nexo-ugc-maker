@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.7.0 - Performance, clothing editor, accessories
+**Performance and polish**
+- The first screen is much lighter: the app's own code went from 915 kB to 222 kB (71 kB gzipped). The accessory editor, clothing editor, export, privacy, UV, reduce and fit dialogs, and the OBJ/glTF loaders now load only when used. (three.js, 676 kB, still loads at start because the editor store uses it.)
+- A Web Worker for painting was *not* added: a full clothing composite measures about 2 ms in Chromium, so there is nothing to win.
+- **Command palette** (Ctrl+K): type to find any command and press Enter. Every shortcut is now a command, and every command is in the palette.
+- **Rebindable shortcuts:** open Keyboard shortcuts (?), click Change, press the new keys. Clashes and browser-reserved combos are refused; Reset restores the default.
+- **Accessibility:** audited with axe on every screen, both themes and the dialogs: 0 violations. Fixes include tab and tree ARIA structure, page landmarks and a heading, low-contrast text, unlabeled fields, focus kept inside dialogs, and hidden items no longer shown by dimming alone.
+
+**Clothing editor**
+- **Snap and guides:** moving layers snaps to panel edges and centres, the template and other layers, with pink guide lines. Toggle with S; hold Alt to move freely.
+- **Arrow keys nudge** the selection 1 px (Shift: 10 px). A held key is one undo step.
+- **Layer groups (folders):** Ctrl+G / Ctrl+Shift+G or the Group button. Hide, lock and opacity apply to every layer inside; folders collapse; moving a group moves its layers; deleting it deletes them (undoable); duplicating it duplicates them.
+- **Non-destructive masks:** Add mask on any layer, then the brush hides and the eraser reveals. Invert, switch off, clear or remove at any time; the layer itself is never changed.
+- **Fill (magic wand)** tool (G): click an area to cover exactly that area with a new layer of the brush colour. Tolerance, connected-only and edge growth options. One undo step.
+- **Text:** curve (-360 to 360 degrees), letter spacing, and 8 more bundled display fonts (Bebas Neue, Oswald, Anton, Orbitron, Press Start 2P, Permanent Marker, Pacifico, Black Ops One). Fonts load only when used.
+
+**Accessories**
+- **Mirror copy:** a mirrored copy of a part or a whole group across the centre line, faces kept pointing outward.
+- **Boolean:** Join, Cut out or Keep overlap between two parts, using a real CSG engine. The originals are hidden, not deleted.
+- **Reduce triangles:** a dialog with before and after wireframes and a percent slider; textures stay where they were. **Fit to 4,000 triangles** shrinks the heaviest parts until the whole accessory fits.
+- **UV layout:** see where a part's triangles land on its texture, drag to move and scroll to tile it, and change the mesh's own UVs (flip, turn, fill the square, auto unwrap).
+- **Attachment marker** on the avatar showing where the selected accessory attaches, named like Roblox's attachment, and moving with R6 / R15.
+- Tests: 80+ new tests across commands, snapping, text, masks, fill, groups, mesh operations, UV maths and project-file repair.
+
 ## 1.6.0 - Import and export
 - **Models keep their materials and textures.** GLB, glTF and OBJ imports are split by material: each material becomes its own part (under a group) with its colour, metalness, roughness, transparency, glow and texture. Textures are decoded once, shared between parts, scaled to 1024 px and added to the library. Pick or drop the model together with its `.mtl`, `.bin` and picture files; the model's own file names are matched. A warning names any pictures the model needed but were not provided. glTF textures are no longer upside down (V is flipped on import).
 - **Upload bundle (ZIP)** for accessories: the model, a `README.md` checklist (status, triangle budget, attachment name, every validation result as a tick box, a pre-upload list), `validation-report.txt`, a project backup and a preview image.

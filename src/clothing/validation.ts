@@ -1,3 +1,4 @@
+import { effectiveOf, groupIndex } from './groups';
 import type { ClothingImage, ClothingKind, ClothingLayer } from '../types';
 import { TEMPLATES } from './templates';
 
@@ -13,7 +14,8 @@ export interface ClothingCheck {
 export function checkLayers(kind: ClothingKind, layers: ClothingLayer[], images: ClothingImage[]): ClothingCheck[] {
   const spec = TEMPLATES[kind];
   const out: ClothingCheck[] = [];
-  const visible = layers.filter((l) => l.visible && l.opacity > 0);
+  const groups = groupIndex(layers);
+  const visible = layers.filter((l) => l.type !== 'group' && effectiveOf(l, groups).visible && effectiveOf(l, groups).opacity > 0);
   if (!visible.length) {
     out.push({ id: 'empty', severity: 'error', title: 'Nothing to export', detail: `The ${spec.label.toLowerCase()} has no visible layers. Add a color fill, a preset or some artwork.` });
     return out;

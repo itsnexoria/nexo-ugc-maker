@@ -12,6 +12,9 @@ interface ViewportState {
   lighting: boolean;
   showAvatar: boolean;
   previewMode: boolean;
+  /** show where the selected accessory attaches on the R6 / R15 avatar */
+  showAttachment: boolean;
+  setShowAttachment: (v: boolean) => void;
   cameraRequest: CameraRequest | null;
   setWireframe: (v: boolean) => void;
   setLighting: (v: boolean) => void;
@@ -27,6 +30,8 @@ export const useViewport = create<ViewportState>((set) => ({
   lighting: true,
   showAvatar: true,
   previewMode: false,
+  showAttachment: true,
+  setShowAttachment: (showAttachment) => set({ showAttachment }),
   cameraRequest: null,
   setWireframe: (wireframe) => set({ wireframe }),
   setLighting: (lighting) => set({ lighting }),

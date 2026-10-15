@@ -167,6 +167,16 @@ export type BlendMode = 'normal' | 'multiply' | 'screen' | 'overlay';
 export type PatternId = 'stripes' | 'checker' | 'dots' | 'grid' | 'camo' | 'zigzag';
 export type ShapeType = 'rect' | 'ellipse' | 'triangle' | 'diamond' | 'star' | 'hexagon';
 
+/**
+ * A non-destructive mask: strokes paint where the layer is HIDDEN (the brush hides, the eraser reveals again).
+ * `invert` flips it so only the painted area shows. The layer's own pixels are never changed.
+ */
+export interface LayerMask {
+  strokes: Stroke[];
+  invert: boolean;
+  enabled: boolean;
+}
+
 export interface ClothingLayerBase {
   id: string;
   name: string;
@@ -176,6 +186,9 @@ export interface ClothingLayerBase {
   blend: BlendMode;
   /** 'all', a body-part group id (torso, rightArm...) or a single panel id (torso.front) */
   clip: string;
+  mask?: LayerMask;
+  /** The group (folder) this layer belongs to. Groups do not nest. */
+  groupId?: string;
 }
 
 export interface FillLayer extends ClothingLayerBase {
@@ -220,6 +233,10 @@ export interface TextLayer extends ClothingLayerBase {
   x: number;
   y: number;
   rotation: number;
+  /** Extra space between letters, in template px (default 0) */
+  spacing?: number;
+  /** Bend the text along an arc: total sweep in degrees. Positive curves up like a rainbow, negative like a smile (default 0) */
+  curve?: number;
 }
 
 export interface ShapeLayer extends ClothingLayerBase {
@@ -254,7 +271,16 @@ export interface PaintLayer extends ClothingLayerBase {
   strokes: Stroke[];
 }
 
-export type ClothingLayer = FillLayer | PatternLayer | ImageLayer | TextLayer | ShapeLayer | PaintLayer;
+/**
+ * A folder of layers. It draws nothing itself: hiding or locking it affects its members, and its opacity is
+ * multiplied into each member's. Its members follow it directly in the layer list (see clothing/groups.ts).
+ */
+export interface GroupLayer extends ClothingLayerBase {
+  type: 'group';
+  collapsed: boolean;
+}
+
+export type ClothingLayer = FillLayer | PatternLayer | ImageLayer | TextLayer | ShapeLayer | PaintLayer | GroupLayer;
 
 export interface ClothingImage {
   id: string;

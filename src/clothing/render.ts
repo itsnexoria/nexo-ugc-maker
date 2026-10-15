@@ -1,6 +1,7 @@
 import { IncrementalPaint } from '../utils/strokePaint';
 import { makeTile } from '../utils/patterns';
 import type { BlendMode, ClothingKind, ClothingLayer, ImageLayer, PatternLayer, ShapeLayer, ShapeType, TextLayer } from '../types';
+import { effectiveOf, groupIndex } from './groups';
 import { TEMPLATES, clipBounds, clipRects } from './templates';
 
 export interface RenderEnv {
@@ -34,18 +35,75 @@ export function fontString(l: Pick<TextLayer, 'font' | 'size' | 'bold' | 'italic
   return `${l.italic ? 'italic ' : ''}${l.bold ? '700' : '400'} ${l.size}px "${l.font}", Arial, sans-serif`;
 }
 
+/** Width of each character of a line (kerning between letters is ignored; only used when letters are placed one by one). */
+function charWidths(ctx: CanvasRenderingContext2D | null, l: TextLayer, chars: string[]): number[] {
+  if (!ctx) return chars.map(() => l.size * 0.58);
+  ctx.font = fontString(l);
+  return chars.map((c) => ctx.measureText(c).width);
+}
+
 export function textSize(l: TextLayer): { w: number; h: number; lines: string[]; lineHeight: number } {
   const lines = l.text.split('\n');
   const lineHeight = l.size * 1.15;
   const ctx = getMeasureCtx();
+  const spacing = l.spacing ?? 0;
   let w = 0;
   if (ctx) {
     ctx.font = fontString(l);
-    for (const line of lines) w = Math.max(w, ctx.measureText(line || ' ').width);
+    for (const line of lines) {
+      const base = ctx.measureText(line || ' ').width;
+      w = Math.max(w, base + spacing * Math.max(0, [...line].length - 1));
+    }
   } else {
-    for (const line of lines) w = Math.max(w, line.length * l.size * 0.58);
+    for (const line of lines) w = Math.max(w, line.length * l.size * 0.58 + spacing * Math.max(0, line.length - 1));
   }
   return { w: Math.max(w, 4), h: lineHeight * lines.length, lines, lineHeight };
+}
+
+export interface Glyph {
+  ch: string;
+  x: number;
+  y: number;
+  /** radians, clockwise */
+  rot: number;
+}
+
+/**
+ * Places the letters of one line on a circle of `radius`, centred on the line's middle.
+ * curve > 0 bends like a rainbow (ends drop), curve < 0 like a smile (ends rise). Positions are relative to the
+ * point where the arc is at its top (or bottom); y grows downward like on the canvas.
+ */
+export function arcGlyphs(chars: string[], widths: number[], spacing: number, curveDeg: number, radius: number): Glyph[] {
+  const total = widths.reduce((a, b) => a + b, 0) + spacing * Math.max(0, chars.length - 1);
+  const dir = curveDeg >= 0 ? 1 : -1;
+  const r = Math.max(1, radius);
+  let cursor = -total / 2;
+  return chars.map((ch, i) => {
+    const mid = cursor + widths[i] / 2;
+    cursor += widths[i] + spacing;
+    const phi = mid / r;
+    return { ch, x: r * Math.sin(phi), y: dir * r * (1 - Math.cos(phi)), rot: dir * phi };
+  });
+}
+
+/** Radius that makes the widest line sweep exactly `curve` degrees. */
+export function arcRadius(widestLine: number, curveDeg: number): number {
+  const theta = (Math.min(360, Math.abs(curveDeg)) * Math.PI) / 180;
+  return theta > 0 ? widestLine / theta : Infinity;
+}
+
+/** Size of the box around curved text, and where its centre sits relative to the layer position (before rotation). */
+export function curvedTextExtent(l: TextLayer): { w: number; h: number; offY: number } {
+  const t = textSize(l);
+  const curve = l.curve ?? 0;
+  if (!curve) return { w: t.w, h: t.h, offY: 0 };
+  const theta = (Math.min(360, Math.abs(curve)) * Math.PI) / 180;
+  const r = arcRadius(t.w, curve);
+  const half = theta / 2;
+  const sag = r * (1 - Math.cos(Math.min(half, Math.PI)));
+  const width = half >= Math.PI / 2 ? 2 * r : 2 * r * Math.sin(half);
+  const dir = curve >= 0 ? 1 : -1;
+  return { w: Math.max(t.w * 0.25, width) + t.h / t.lines.length * 0.4, h: sag + t.h, offY: (dir * sag) / 2 };
 }
 
 // ------------------------------------------------------------------ patterns
@@ -156,23 +214,59 @@ function drawPattern(ctx: CanvasRenderingContext2D, kind: ClothingKind, l: Patte
 
 function drawText(ctx: CanvasRenderingContext2D, l: TextLayer): void {
   const { lines, lineHeight, w } = textSize(l);
+  const spacing = l.spacing ?? 0;
+  const curve = l.curve ?? 0;
   ctx.translate(l.x, l.y);
   ctx.rotate((l.rotation * Math.PI) / 180);
   ctx.font = fontString(l);
   ctx.textBaseline = 'middle';
-  ctx.textAlign = l.align;
   ctx.lineJoin = 'round';
-  const x = l.align === 'left' ? -w / 2 : l.align === 'right' ? w / 2 : 0;
   const top = (-lines.length * lineHeight) / 2 + lineHeight / 2;
-  lines.forEach((line, i) => {
-    const y = top + i * lineHeight;
+  const paint = (text: string, x: number, y: number) => {
     if (l.strokeWidth > 0) {
       ctx.strokeStyle = l.stroke;
       ctx.lineWidth = l.strokeWidth;
-      ctx.strokeText(line, x, y);
+      ctx.strokeText(text, x, y);
     }
     ctx.fillStyle = l.color;
-    ctx.fillText(line, x, y);
+    ctx.fillText(text, x, y);
+  };
+
+  if (!curve && !spacing) {
+    ctx.textAlign = l.align;
+    const x = l.align === 'left' ? -w / 2 : l.align === 'right' ? w / 2 : 0;
+    lines.forEach((line, i) => paint(line, x, top + i * lineHeight));
+    return;
+  }
+
+  // letters placed one by one: with extra spacing, and/or along an arc
+  const measure = getMeasureCtx();
+  ctx.textAlign = 'center';
+  const radius = curve ? arcRadius(w, curve) : Infinity;
+  const dir = curve >= 0 ? 1 : -1;
+  lines.forEach((line, i) => {
+    const chars = [...line];
+    if (!chars.length) return;
+    const widths = charWidths(measure, l, chars);
+    const dy = top + i * lineHeight;
+    if (!curve) {
+      const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+      let cx = l.align === 'left' ? -w / 2 : l.align === 'right' ? w / 2 - total : -total / 2;
+      chars.forEach((ch, k) => {
+        paint(ch, cx + widths[k] / 2, dy);
+        cx += widths[k] + spacing;
+      });
+      return;
+    }
+    // lines further from the circle's centre get a larger radius, so stacked lines stay concentric
+    const r = Math.max(1, radius - dir * dy);
+    for (const g of arcGlyphs(chars, widths, spacing, curve, r)) {
+      ctx.save();
+      ctx.translate(g.x, dy + g.y);
+      ctx.rotate(g.rot);
+      paint(g.ch, 0, 0);
+      ctx.restore();
+    }
   });
 }
 
@@ -210,13 +304,42 @@ function makeCanvas(w: number, h: number): HTMLCanvasElement {
 
 const paintRasters = new Map<string, IncrementalPaint>();
 
+const maskRasters = new Map<string, IncrementalPaint>();
+const maskedPics = new Map<string, HTMLCanvasElement>();
+
 export function forgetPaintLayer(id: string): void {
   paintRasters.delete(id);
+  maskRasters.delete(id);
+  maskedPics.delete(id);
 }
 
 /** Frees every paint-layer raster (called when another project is opened). */
 export function clearClothingCaches(): void {
   paintRasters.clear();
+  maskRasters.clear();
+  maskedPics.clear();
+}
+
+/** The layer's picture with its mask applied (a new picture; the layer's own cache is never touched). */
+function applyMask(l: ClothingLayer, pic: HTMLCanvasElement, pxW: number, pxH: number, scale: number): HTMLCanvasElement {
+  const mask = l.mask;
+  if (!mask || mask.enabled === false) return pic;
+  if (!mask.strokes.length && !mask.invert) return pic;
+  let ip = maskRasters.get(l.id);
+  if (!ip) maskRasters.set(l.id, (ip = new IncrementalPaint()));
+  const hidden = ip.render(mask.strokes, pxW, pxH, scale);
+  let out = maskedPics.get(l.id);
+  if (!out || out.width !== pxW || out.height !== pxH) maskedPics.set(l.id, (out = makeCanvas(pxW, pxH)));
+  const c = out.getContext('2d')!;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.globalAlpha = 1;
+  c.globalCompositeOperation = 'source-over';
+  c.clearRect(0, 0, pxW, pxH);
+  c.drawImage(pic, 0, 0);
+  c.globalCompositeOperation = mask.invert ? 'destination-in' : 'destination-out';
+  c.drawImage(hidden, 0, 0);
+  c.globalCompositeOperation = 'source-over';
+  return out;
 }
 
 /** Cached picture of one layer (unclipped, full opacity). Re-made only when that layer object changes. */
@@ -275,14 +398,17 @@ export function drawLayers(ctx: CanvasRenderingContext2D, kind: ClothingKind, la
   ctx.clearRect(0, 0, pxW, pxH);
   ctx.restore();
 
+  const groups = groupIndex(layers);
   for (const l of layers) {
-    if (!l.visible || l.opacity <= 0) continue;
-    const pic = rasterize(kind, l, env, pxW, pxH, k);
+    if (l.type === 'group') continue; // a folder draws nothing itself
+    const eff = effectiveOf(l, groups);
+    if (!eff.visible || eff.opacity <= 0) continue;
+    const pic = applyMask(l, rasterize(kind, l, env, pxW, pxH, k), pxW, pxH, k);
     ctx.save();
     ctx.setTransform(k, 0, 0, k, 0, 0);
     applyClip(ctx, kind, l.clip);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.globalAlpha = Math.min(1, Math.max(0, l.opacity));
+    ctx.globalAlpha = Math.min(1, Math.max(0, eff.opacity));
     ctx.globalCompositeOperation = BLEND[l.blend];
     ctx.drawImage(pic, 0, 0);
     ctx.restore();
@@ -316,8 +442,10 @@ export function layerBox(l: ClothingLayer): LayerBox | null {
     case 'shape':
       return { cx: l.x, cy: l.y, w: l.w, h: l.h, rotation: l.rotation };
     case 'text': {
-      const s = textSize(l);
-      return { cx: l.x, cy: l.y, w: s.w + l.strokeWidth, h: s.h, rotation: l.rotation };
+      const e = curvedTextExtent(l);
+      const a = (l.rotation * Math.PI) / 180;
+      // the box is centred on the arc's middle, which sits above or below the layer position when text is curved
+      return { cx: l.x - e.offY * Math.sin(a), cy: l.y + e.offY * Math.cos(a), w: e.w + l.strokeWidth, h: e.h, rotation: l.rotation };
     }
     default:
       return null;

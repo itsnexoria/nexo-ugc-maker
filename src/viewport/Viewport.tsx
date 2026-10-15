@@ -10,6 +10,7 @@ import type { Vec3 } from '../types';
 import { Avatar } from './Avatar';
 import { Gizmo, SelectionBox } from './Gizmo';
 import { SceneObjects } from './SceneObjects';
+import { AttachmentMarker } from './AttachmentMarker';
 import { viewportApi } from './api';
 import { handleDroppedFiles } from '../editor/importers';
 import { PerfWatch } from '../components/PerfWatch';
@@ -202,6 +203,7 @@ export function Viewport() {
         <Avatar />
         <SceneObjects />
         <SelectionBox />
+        <AttachmentMarker />
         <Gizmo />
         <OrbitControls
           ref={controls}

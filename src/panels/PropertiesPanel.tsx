@@ -14,6 +14,7 @@ import { usePaintBrush } from '../store/paintBrush';
 import { ColorField, NumberField, SliderField, Switch } from '../components/ui/Fields';
 import { LOW_POLY_KINDS, SHAPE_LABELS, getModelGeometry, getPrimitiveGeometry, triangleCount } from '../utils/geometry';
 import { toSpec } from '../utils/scene';
+import { LIMITS } from '../utils/validation';
 import type { SceneObject, SlotId, Vec3 } from '../types';
 
 function TransformSection({ obj }: { obj: SceneObject }) {
@@ -297,6 +298,88 @@ function AvatarPartInfo({ name }: { name: string }) {
   );
 }
 
+function ModifiersSection({ obj }: { obj: SceneObject }) {
+  const objects = useEditor((s) => s.objects);
+  const toast = useUI((s) => s.toast);
+  const openModal = useUI((s) => s.openModal);
+  const [other, setOther] = useState('');
+  const [busy, setBusy] = useState(false);
+  const isGroup = obj.kind === 'group';
+  const candidates = Object.values(objects).filter((o) => o.id !== obj.id && o.kind !== 'group' && o.visible);
+  const choice = candidates.some((c) => c.id === other) ? other : '';
+  const run = async (fn: (m: typeof import('../editor/modifiers')) => unknown) => {
+    setBusy(true);
+    try {
+      await fn(await import('../editor/modifiers'));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Section title="Modifiers">
+      <div className="row" style={{ flexWrap: 'wrap' }}>
+        <button className="btn sm" disabled={busy} title="Adds a mirrored copy on the other side of the centre line. The original stays." onClick={() => void run((m) => m.mirrorObject(obj.id))}>
+          Mirror copy
+        </button>
+        {!isGroup && (
+          <button className="btn sm" title="See and change how the texture sits on this part" onClick={() => openModal('uv')}>
+            UV layout…
+          </button>
+        )}
+        {!isGroup && !obj.paint && (
+          <button className="btn sm" title="Make this part use fewer triangles" onClick={() => openModal('reduce')}>
+            Reduce triangles…
+          </button>
+        )}
+        <button
+          className="btn sm"
+          disabled={busy}
+          title="Reduce the heaviest parts until the whole accessory fits Roblox's triangle limit"
+          onClick={() =>
+            void run(async (m) => {
+              const r = await m.autoFitBudget(LIMITS.maxTriangles);
+              toast(r.changed ? 'success' : 'info', r.changed ? `Reduced ${r.changed} part${r.changed === 1 ? '' : 's'}: ${r.before.toLocaleString()} to ${r.after.toLocaleString()} triangles.` : `Already within ${LIMITS.maxTriangles.toLocaleString()} triangles (${r.before.toLocaleString()}).`);
+            })
+          }
+        >
+          Fit to {LIMITS.maxTriangles.toLocaleString()} triangles
+        </button>
+      </div>
+      {!isGroup && (
+        <>
+          <div className="row" style={{ gap: 6 }}>
+            <label htmlFor="bool-other" className="dim" style={{ width: 52 }}>
+              With
+            </label>
+            <select id="bool-other" className="select" value={choice} onChange={(e) => setOther(e.target.value)}>
+              <option value="">Choose another part…</option>
+              {candidates.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="row" style={{ flexWrap: 'wrap' }}>
+            {(['union', 'subtract', 'intersect'] as const).map((op) => (
+              <button
+                key={op}
+                className="btn sm"
+                disabled={busy || !choice}
+                title={op === 'union' ? 'Merge the two parts into one solid' : op === 'subtract' ? `Cut “${objects[choice]?.name ?? 'the other part'}” out of “${obj.name}”` : 'Keep only the space both parts share'}
+                onClick={() => void run((m) => m.booleanObjects(obj.id, choice, op))}
+              >
+                {op === 'union' ? 'Join' : op === 'subtract' ? 'Cut out' : 'Keep overlap'}
+              </button>
+            ))}
+          </div>
+          <p className="hint">Join, cut and overlap work on solid, closed shapes. The two originals are hidden, not deleted.</p>
+        </>
+      )}
+    </Section>
+  );
+}
+
 export function PropertiesPanel() {
   const id = useEditor((s) => s.selectedId);
   const obj = useEditor((s) => (s.selectedId ? s.objects[s.selectedId] : undefined));
@@ -331,6 +414,7 @@ export function PropertiesPanel() {
         </Section>
       )}
       <ObjectSection obj={obj} />
+      <ModifiersSection obj={obj} />
       {obj.kind !== 'group' && (
         <Section title="Texture">
           <TextureControls id={obj.id} />

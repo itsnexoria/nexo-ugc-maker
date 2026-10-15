@@ -1,4 +1,4 @@
-import type { ClothingImage, ClothingKind, ClothingLayer, FillLayer, ImageLayer, PaintLayer, PatternLayer, ShapeLayer, TextLayer } from '../types';
+import type { GroupLayer, ClothingImage, ClothingKind, ClothingLayer, FillLayer, ImageLayer, PaintLayer, PatternLayer, ShapeLayer, TextLayer } from '../types';
 import { uid } from '../utils/ids';
 import { clipBounds, TEMPLATES } from './templates';
 
@@ -76,10 +76,15 @@ export function makeLayer(kind: ClothingKind, type: NewLayerType, clip?: string,
     }
     case 'paint':
       return { ...base('Paint', c), type: 'paint', strokes: [] } satisfies PaintLayer;
+    case 'group':
+      return { ...base('Group', 'all'), type: 'group', collapsed: false } satisfies GroupLayer;
   }
 }
 
-export const FONTS = ['Chakra Petch', 'IBM Plex Sans', 'Arial', 'Georgia', 'Courier New', 'Impact', 'Trebuchet MS', 'Verdana'];
+/** Bundled fonts look the same everywhere; the system fonts below them depend on the viewer's computer. */
+export const WEB_FONTS = ['Chakra Petch', 'IBM Plex Sans', 'Bebas Neue', 'Oswald', 'Anton', 'Orbitron', 'Press Start 2P', 'Permanent Marker', 'Pacifico', 'Black Ops One'];
+export const SYSTEM_FONTS = ['Arial', 'Georgia', 'Courier New', 'Impact', 'Trebuchet MS', 'Verdana'];
+export const FONTS = [...WEB_FONTS, ...SYSTEM_FONTS];
 
 export const PATTERNS: { id: PatternLayer['pattern']; label: string }[] = [
   { id: 'stripes', label: 'Stripes' },

@@ -113,7 +113,8 @@
   border-left-color: var(--accent);
 }
 .lrow.muted .tree-name {
-  opacity: 0.45;
+  opacity: 0.72; /* still readable (contrast), and italic so hidden items are not told apart by dimming alone */
+  font-style: italic;
 }
 .lrow-actions {
   display: inline-flex;
@@ -332,4 +333,15 @@
   max-height: 150px;
   display: block;
   overflow: auto;
+}
+
+.mask-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-dim);
+  margin-right: 2px;
+}
+
+.lrow.group {
+  font-weight: 600;
 }

@@ -136,3 +136,31 @@ describe('project file: clothing projects keep their designs', () => {
     expect(serializeCurrentProject().clothing).toBeUndefined();
   });
 });
+
+describe('project file: clothing groups and masks', () => {
+  const img = { id: 'i1', name: 'a', dataUrl: 'data:image/png;base64,AAAA', width: 1, height: 1 };
+  const clothing = (shirt: unknown[]) => ({ version: 1, activeKind: 'shirt', images: [img], designs: { shirt, pants: [], tshirt: [] } });
+
+  it('keeps groups and valid masks', () => {
+    const shirt = [
+      { id: 'g', type: 'group', collapsed: false, groupId: undefined },
+      { id: 'a', type: 'fill', groupId: 'g', mask: { strokes: [], invert: false, enabled: true } },
+    ];
+    const r = parseProjectFileText(file(base({ clothing: clothing(shirt) })));
+    expect(r.data.clothing!.designs.shirt.map((l) => l.id)).toEqual(['g', 'a']);
+    expect(r.data.clothing!.designs.shirt[1].mask).toBeDefined();
+    expect(r.warnings).toEqual([]);
+  });
+
+  it('repairs orphaned group membership and drops a damaged mask', () => {
+    const shirt = [
+      { id: 'a', type: 'fill', groupId: 'ghost' },
+      { id: 'b', type: 'fill', mask: 'oops' },
+    ];
+    const r = parseProjectFileText(file(base({ clothing: clothing(shirt) })));
+    const [a, b] = r.data.clothing!.designs.shirt;
+    expect(a.groupId).toBeUndefined();
+    expect(b.mask).toBeUndefined();
+    expect(r.warnings.join(' ')).toMatch(/mask .* damaged/);
+  });
+});

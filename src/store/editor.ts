@@ -21,7 +21,7 @@ import type {
 } from '../types';
 import { applyPresetToMaterial, DEFAULT_MATERIAL } from '../assets/materials';
 import { SLOT_ANCHORS } from '../assets/avatar';
-import { LOW_POLY_KINDS, SHAPE_LABELS } from '../utils/geometry';
+import { geometryToModelAsset, LOW_POLY_KINDS, SHAPE_LABELS } from '../utils/geometry';
 import { emptyPaint, forgetPaint, strokeScale } from '../utils/paint';
 import { objectTriangles } from '../utils/validation';
 import { uid } from '../utils/ids';
@@ -96,6 +96,13 @@ export interface EditorState {
   // scene editing (all undoable)
   addPrimitive: (kind: Exclude<ShapeKind, 'group' | 'imported'>) => string;
   addImported: (model: ModelAsset, name: string) => string;
+  /**
+   * Adds finished meshes (results of mirror, boolean and similar operations) as parts. Geometry is in the space of
+   * `parentId`. With `groupName` the parts go under a new group. `hide` lists parts to hide afterwards. One undo step.
+   */
+  addMeshObjects: (label: string, specs: { name: string; geometry: THREE.BufferGeometry; material: MaterialProps; layerId: string }[], opts: { parentId: string | null; groupName?: string; hide?: string[] }) => string | null;
+  /** Replaces the mesh of a part (used by triangle reduction). The part keeps its place, size and material. */
+  setObjectMesh: (id: string, geometry: THREE.BufferGeometry, label: string) => boolean;
   /** Adds a model that came with several materials: one part per material under a group (or a single part). Returns the selected id. */
   addImportedParts: (name: string, parts: { model: ModelAsset; name: string; material: MaterialProps }[], textures: TextureAsset[]) => string;
   addAccessory: (spec: PartSpec, slot: SlotId) => string;
@@ -346,6 +353,60 @@ export const useEditor = create<EditorState>((set, get) => {
       commit(`Imported mesh "${name}" (${model.triangles} triangles)`, { objects, order });
       set({ selectedId: id, selectedAvatarPart: null });
       return id;
+    },
+
+    addMeshObjects: (label, specs, opts) => {
+      if (!specs.length) return null;
+      const s = get();
+      const objects = { ...s.objects };
+      const order = [...s.order];
+      const models: Record<string, ModelAsset> = {};
+      const base = (id: string, name: string, parentId: string | null, layerId: string): SceneObject => ({
+        id,
+        name: uniqueName(name, objects),
+        kind: 'imported',
+        parentId,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        material: { ...DEFAULT_MATERIAL },
+        visible: true,
+        locked: false,
+        layerId,
+      });
+      let parent = opts.parentId;
+      let selected: string | null = null;
+      if (opts.groupName) {
+        const gid = uid('obj');
+        objects[gid] = { ...base(gid, opts.groupName, opts.parentId, specs[0].layerId), kind: 'group' };
+        order.push(gid);
+        parent = gid;
+        selected = gid;
+      }
+      for (const sp of specs) {
+        const id = uid('obj');
+        const model = geometryToModelAsset(uid('model'), sp.name, sp.geometry);
+        models[model.id] = model;
+        objects[id] = { ...base(id, sp.name, parent, sp.layerId), modelId: model.id, material: { ...sp.material } };
+        order.push(id);
+        selected ??= id;
+      }
+      for (const hid of opts.hide ?? []) if (objects[hid]) objects[hid] = { ...objects[hid], visible: false };
+      set((st) => ({ models: { ...st.models, ...models } }));
+      commit(label, { objects, order });
+      set({ selectedId: selected, selectedAvatarPart: null });
+      return selected;
+    },
+
+    setObjectMesh: (id, geometry, label) => {
+      const s = get();
+      const o = s.objects[id];
+      if (!o || o.kind === 'group' || o.paint) return false;
+      const model = geometryToModelAsset(uid('model'), o.name, geometry);
+      set((st) => ({ models: { ...st.models, [model.id]: model } }));
+      const objects = { ...s.objects, [id]: { ...o, kind: 'imported' as const, modelId: model.id } };
+      commit(label, { objects });
+      return true;
     },
 
     addImportedParts: (name, parts, textures) => {

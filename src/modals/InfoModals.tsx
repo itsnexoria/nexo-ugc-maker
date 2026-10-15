@@ -1,67 +1,145 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Modal } from '../components/ui/Overlays';
+import { comboFromEvent, comboParts, formatCombo, isReservedCombo } from '../commands/keys';
+import { conflictFor, effectiveKeys, getCommands, withBinding, type CommandScreen } from '../commands/registry';
+import { useSettings } from '../store/settings';
 import { useUI } from '../store/ui';
 import { useEditor } from '../store/editor';
 
-const SHORTCUTS: [string, string][] = [
-  ['Ctrl + Z', 'Undo'],
-  ['Ctrl + Y  /  Ctrl + Shift + Z', 'Redo'],
-  ['Ctrl + S', 'Save project'],
-  ['Delete', 'Delete selected object'],
-  ['Ctrl + D', 'Duplicate selected object'],
-  ['F', 'Focus selected object'],
-  ['F2', 'Rename selected object'],
-  ['V  W  E  R  B', 'Select, move, rotate, scale, paint'],
-  ['G  /  X', 'Toggle grid / snap to grid'],
-  ['L  /  Z', 'Toggle lighting / wireframe'],
-  ['1 – 5', 'Camera: front, back, left, right, 3/4'],
-  ['Home', 'Reset camera'],
-  ['P', 'Preview mode'],
-  ['Esc', 'Deselect, or leave preview'],
-  ['Right-click', 'Object menu in the viewport and scene list'],
-];
+const MOUSE_NOTES: Record<'editor' | 'clothing', [string, string][]> = {
+  editor: [
+    ['Left-drag / right-drag / scroll', 'Orbit / pan / zoom the viewport'],
+    ['Right-click', 'Object menu in the viewport and scene list'],
+    ['Drag X, Y, Z labels', 'Scrub values in number fields'],
+  ],
+  clothing: [
+    ['Shift / Ctrl + click', 'Select a range / add to selection'],
+    ['Space + drag, scroll', 'Pan, zoom the template'],
+    ['Shift (while rotating)', 'Snap rotation to 15°'],
+  ],
+};
 
-const CLOTHING_SHORTCUTS: [string, string][] = [
-  ['Ctrl + Z', 'Undo'],
-  ['Ctrl + Y  /  Ctrl + Shift + Z', 'Redo'],
-  ['Ctrl + S', 'Save project'],
-  ['Ctrl + D', 'Duplicate selected layers'],
-  ['Ctrl + A', 'Select all layers'],
-  ['Shift / Ctrl + click', 'Select a range / add to selection'],
-  ['Delete', 'Delete selected layers'],
-  ['V', 'Select and move layers'],
-  ['P', 'Place on model (click the 3D model)'],
-  ['B  /  E', 'Brush / eraser'],
-  ['T', 'Add text'],
-  ['Space + drag', 'Pan the template'],
-  ['Scroll', 'Zoom the template'],
-  ['Shift (while rotating)', 'Snap rotation to 15°'],
-  ['Esc', 'Deselect and return to Select'],
-];
+function Keycaps({ combo }: { combo: string }) {
+  return (
+    <>
+      {comboParts(combo).map((p, i) => (
+        <span key={i} className="kbd" style={{ marginRight: 4 }}>
+          {p}
+        </span>
+      ))}
+    </>
+  );
+}
 
 export function ShortcutsModal() {
   const close = useUI((s) => s.closeModal);
-  const clothing = useEditor((s) => s.screen === 'clothing');
+  const screen = useEditor((s) => (s.screen === 'clothing' ? 'clothing' : 'editor')) as CommandScreen;
+  const overrides = useSettings((s) => s.shortcuts);
+  const setSetting = useSettings((s) => s.set);
+  const [capturing, setCapturing] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const commands = useMemo(() => getCommands().filter((c) => c.screens.includes(screen) && (c.keys?.length || Object.prototype.hasOwnProperty.call(overrides, c.id))), [screen, overrides]);
+  const all = useMemo(() => getCommands(), []);
+  const groups = useMemo(() => [...new Set(commands.map((c) => c.group))], [commands]);
+
+  useEffect(() => {
+    if (!capturing) return;
+    document.body.dataset.recordingKey = '1';
+    const cmd = all.find((c) => c.id === capturing);
+    const onKey = (e: KeyboardEvent) => {
+      const combo = comboFromEvent(e);
+      if (!combo) return; // just a modifier so far
+      e.preventDefault();
+      e.stopPropagation();
+      if (combo === 'escape') {
+        setCapturing(null);
+        setMessage(null);
+        return;
+      }
+      if (!cmd) return;
+      if (isReservedCombo(combo)) {
+        setMessage(`${formatCombo(combo)} is used by the browser or the command palette. Try another key.`);
+        return;
+      }
+      const clash = conflictFor(all, combo, cmd.id, screen, overrides);
+      if (clash) {
+        setMessage(`${formatCombo(combo)} is already used by “${clash.title}”. Change that one first, or pick another key.`);
+        return;
+      }
+      setSetting('shortcuts', withBinding(overrides, cmd, combo));
+      setCapturing(null);
+      setMessage(null);
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => {
+      window.removeEventListener('keydown', onKey, true);
+      delete document.body.dataset.recordingKey;
+    };
+  }, [capturing, all, overrides, screen, setSetting]);
+
   return (
-    <Modal title="Keyboard shortcuts" size="narrow" onClose={close}>
+    <Modal
+      title="Keyboard shortcuts"
+      size="narrow"
+      onClose={close}
+      footer={
+        <>
+          <span className="hint grow">Press Ctrl + K anywhere to search every command.</span>
+          <button className="btn" disabled={!Object.keys(overrides).length} onClick={() => setSetting('shortcuts', {})}>
+            Reset all
+          </button>
+        </>
+      }
+    >
+      <div aria-live="polite" className="hint" style={{ minHeight: 18, color: message ? 'var(--warn)' : undefined }}>
+        {capturing ? message ?? 'Press the new key combination, or Esc to cancel.' : 'Click Change to give a command a different key.'}
+      </div>
+      {groups.map((g) => (
+        <div key={g}>
+          <h3 className="panel-title" style={{ marginTop: 10 }}>
+            {g}
+          </h3>
+          <table className="grid-table plain">
+            <tbody>
+              {commands
+                .filter((c) => c.group === g)
+                .map((c) => {
+                  const keys = effectiveKeys(c, overrides);
+                  const changed = Object.prototype.hasOwnProperty.call(overrides, c.id);
+                  return (
+                    <tr key={c.id}>
+                      <td style={{ width: '38%' }}>{keys.length ? keys.map((k, i) => <span key={k}>{i > 0 && <span className="dim" style={{ marginRight: 4 }}>or</span>}<Keycaps combo={k} /></span>) : <span className="dim">not set</span>}</td>
+                      <td>{c.title}</td>
+                      <td className="r" style={{ whiteSpace: 'nowrap' }}>
+                        <button className="btn sm" aria-label={`Change the shortcut for ${c.title}`} aria-pressed={capturing === c.id} onClick={() => (setMessage(null), setCapturing(capturing === c.id ? null : c.id))}>
+                          {capturing === c.id ? 'Press a key…' : 'Change'}
+                        </button>
+                        {changed && (
+                          <button className="btn sm" aria-label={`Reset the shortcut for ${c.title}`} onClick={() => setSetting('shortcuts', withBinding(overrides, c, null))}>
+                            Reset
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      <h3 className="panel-title" style={{ marginTop: 10 }}>
+        Mouse
+      </h3>
       <table className="grid-table plain">
         <tbody>
-          {(clothing ? CLOTHING_SHORTCUTS : SHORTCUTS).map(([k, d]) => (
+          {MOUSE_NOTES[screen].map(([k, d]) => (
             <tr key={k}>
-              <td>
-                {k.split('  ').map((p, i) => (
-                  <span key={i} className="kbd" style={{ marginRight: 4 }}>
-                    {p.trim()}
-                  </span>
-                ))}
-              </td>
+              <td style={{ width: '38%' }}>{k}</td>
               <td>{d}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="hint" style={{ marginTop: 10 }}>
-        Mouse: left-drag orbits, right-drag pans, scroll zooms. Drag the labels X, Y, Z in number fields to scrub values.
-      </p>
     </Modal>
   );
 }

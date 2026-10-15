@@ -1,5 +1,6 @@
 import { DEFAULT_MATERIAL } from '../assets/materials';
 import { DEFAULT_LAYERS } from './scene';
+import { normalizeGroups } from '../clothing/groups';
 import { DEFAULT_CAMERA } from '../store/viewport';
 import type { ClothingData, ClothingKind, ClothingLayer, Layer, MaterialProps, ModelAsset, ProjectData, SceneObject, TextureAsset, Vec3 } from '../types';
 
@@ -33,7 +34,7 @@ export interface ParsedProject {
 const SHAPES = new Set(['cube', 'sphere', 'cylinder', 'cone', 'torus', 'capsule', 'wedge', 'pyramid', 'icosphere', 'torusknot', 'arch', 'imported', 'group']);
 const SLOTS = new Set(['hat', 'hair', 'face', 'shoulder', 'back', 'waist', 'accessory']);
 const KINDS: ClothingKind[] = ['shirt', 'pants', 'tshirt'];
-const CLOTHING_LAYER_TYPES = new Set(['fill', 'pattern', 'image', 'text', 'shape', 'paint']);
+const CLOTHING_LAYER_TYPES = new Set(['fill', 'pattern', 'image', 'text', 'shape', 'paint', 'group']);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -105,7 +106,17 @@ function sanitizeClothing(raw: unknown, warn: (m: string) => void): ClothingData
         return false;
       }
       return true;
+    }).map((l) => {
+      // a damaged mask is dropped rather than failing the whole file
+      const mask = (l as { mask?: unknown }).mask;
+      if (mask !== undefined && !(isObj(mask) && Array.isArray(mask.strokes))) {
+        warn(`A mask on the ${k} was damaged and was removed.`);
+        const { mask: _m, ...rest } = l as ClothingLayer & { mask?: unknown };
+        return rest as ClothingLayer;
+      }
+      return l;
     });
+    designs[k] = normalizeGroups(designs[k]);
   }
   const r15 = isObj(c.r15) && isNum(c.r15.torsoLower) && isNum(c.r15.limbUpper) && isNum(c.r15.limbLower) ? { torsoLower: c.r15.torsoLower, limbUpper: c.r15.limbUpper, limbLower: c.r15.limbLower } : undefined;
   return { version: 1, designs, images, activeKind: KINDS.includes(c.activeKind as ClothingKind) ? (c.activeKind as ClothingKind) : 'shirt', ...(r15 ? { r15 } : {}) };

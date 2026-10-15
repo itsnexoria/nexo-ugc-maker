@@ -1,65 +1,38 @@
-import { useEffect, useState } from 'react';
-import { BottomPanel } from './panels/BottomPanel';
-import { RightPanel } from './panels/RightPanel';
-import { TopBar } from './components/TopBar';
-import { Toolbox } from './components/Toolbox';
-import { ViewportOverlay } from './components/ViewportOverlay';
+import { Suspense, lazy, useEffect, useState } from 'react';
 import { BusyOverlay, ConfirmHost, ContextMenuHost, PromptHost, ToastHost } from './components/ui/Overlays';
 import { Home } from './home/Home';
-import { ExportModal } from './modals/ExportModal';
-import { ExportClothingModal } from './modals/ExportClothingModal';
-import { ClothingWorkspace } from './clothing/ClothingEditor';
 import { NewProjectModal, OpenProjectModal } from './modals/ProjectModals';
 import { AboutModal, ShortcutsModal } from './modals/InfoModals';
-import { PrivacyModal } from './modals/PrivacyModal';
-import { R15FitModal } from './modals/R15FitModal';
 import { SettingsModal } from './modals/SettingsModal';
 import { BrandMark } from './components/Brand';
 import { useShortcuts } from './hooks/useShortcuts';
-import { PHONE_BELOW, useCompact } from './hooks/useCompact';
+import { PHONE_BELOW } from './hooks/useCompact';
 import { useEditor } from './store/editor';
 import { applyTheme, useSettings } from './store/settings';
-import { captureMissingThumbnail, saveNow, startAutosave } from './store/session';
+import { saveNow, startAutosave } from './store/session';
 import { seedIfFirstRun } from './store/projects';
 import { useUI } from './store/ui';
-import { useViewport } from './store/viewport';
-import { Tour, tourSeen } from './components/Tour';
+import { Tour } from './components/Tour';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { Viewport } from './viewport/Viewport';
 import { SaveBanner } from './components/SaveBanner';
+import { CommandPalette } from './components/CommandPalette';
 import { useStorageHealth } from './utils/storageHealth';
 
-function Workspace() {
-  const preview = useViewport((s) => s.previewMode);
-  const projectId = useEditor((s) => s.project.id);
-  const compact = useCompact();
-  const panelsOpen = useUI((s) => s.panelsOpen);
+// Heavy screens and dialogs load on demand, so the home screen opens fast.
+const lazyNamed = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) => lazy(() => load().then((m) => ({ default: m[name] })));
+const ExportModal = lazyNamed(() => import('./modals/ExportModal'), 'ExportModal');
+const ExportClothingModal = lazyNamed(() => import('./modals/ExportClothingModal'), 'ExportClothingModal');
+const PrivacyModal = lazyNamed(() => import('./modals/PrivacyModal'), 'PrivacyModal');
+const R15FitModal = lazyNamed(() => import('./modals/R15FitModal'), 'R15FitModal');
+const ReduceModal = lazyNamed(() => import('./modals/ReduceModal'), 'ReduceModal');
+const UvModal = lazyNamed(() => import('./modals/UvModal'), 'UvModal');
+const ClothingWorkspace = lazyNamed(() => import('./clothing/ClothingEditor'), 'ClothingWorkspace');
+const Workspace = lazy(() => import('./AccessoryWorkspace'));
 
-  useEffect(() => {
-    const t = setTimeout(() => void captureMissingThumbnail(), 1800);
-    const tour = setTimeout(() => {
-      if (!tourSeen('accessory') && !useUI.getState().modal) useUI.getState().startTour('accessory');
-    }, 1200);
-    return () => {
-      clearTimeout(t);
-      clearTimeout(tour);
-    };
-  }, [projectId]);
-
+function ScreenFallback() {
   return (
-    <div className={`app ${preview ? 'preview' : ''} ${compact ? 'compact' : ''} ${panelsOpen ? 'panels-open' : ''}`}>
-      <TopBar />
-      <div className="workspace">
-        <Toolbox />
-        <div className="center">
-          <div className="viewport-area">
-            <Viewport key={projectId} />
-            <ViewportOverlay />
-          </div>
-          <BottomPanel />
-        </div>
-        <RightPanel />
-      </div>
+    <div className="boot" role="status" aria-label="Loading">
+      <div className="spinner" />
     </div>
   );
 }
@@ -142,17 +115,24 @@ export default function App() {
         </div>
       )}
       {screen === 'home' && <Home />}
-      {screen === 'editor' && <Workspace />}
-      {screen === 'clothing' && <ClothingWorkspace />}
+      <Suspense fallback={<ScreenFallback />}>
+        {screen === 'editor' && <Workspace />}
+        {screen === 'clothing' && <ClothingWorkspace />}
+      </Suspense>
       {modal === 'settings' && <SettingsModal />}
-      {modal === 'export' && <ExportModal />}
-      {modal === 'exportClothing' && <ExportClothingModal />}
+      <Suspense fallback={null}>
+        {modal === 'export' && <ExportModal />}
+        {modal === 'exportClothing' && <ExportClothingModal />}
+        {modal === 'privacy' && <PrivacyModal />}
+        {modal === 'r15' && <R15FitModal />}
+        {modal === 'reduce' && <ReduceModal />}
+        {modal === 'uv' && <UvModal />}
+      </Suspense>
       {modal === 'new' && <NewProjectModal />}
       {modal === 'open' && <OpenProjectModal />}
       {modal === 'shortcuts' && <ShortcutsModal />}
+      {modal === 'palette' && <CommandPalette />}
       {modal === 'about' && <AboutModal />}
-      {modal === 'privacy' && <PrivacyModal />}
-      {modal === 'r15' && <R15FitModal />}
       <SaveBanner />
       <Tour />
       <ConfirmHost />

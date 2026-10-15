@@ -54,7 +54,7 @@
 .wm-ugc {
   font-size: 8.5px;
   letter-spacing: 0.34em;
-  color: var(--accent);
+  color: var(--accent-text, var(--accent));
   margin-top: 2px;
 }
 .project-name {
@@ -381,7 +381,8 @@
   outline-offset: -1px;
 }
 .tree-row.muted .tree-name {
-  opacity: 0.45;
+  opacity: 0.72; /* still readable (contrast), and italic so hidden items are not told apart by dimming alone */
+  font-style: italic;
 }
 .tree-row.bone {
   color: var(--text-dim);
